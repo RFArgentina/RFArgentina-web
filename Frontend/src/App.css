@@ -1,0 +1,297 @@
+.App-logo {
+    height: 40vmin;
+    pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .App-logo {
+        animation: App-logo-spin infinite 20s linear;
+    }
+}
+
+.App-header {
+    background-color: #0f0f10;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-size: calc(10px + 2vmin);
+    color: white;
+}
+
+.App-link {
+    color: #61dafb;
+}
+
+@keyframes App-logo-spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Custom RFA Color Palette */
+:root {
+  --rfa-primary: #0A2A43;
+  --rfa-primary-dark: #082234;
+  --rfa-action: #16A34A;
+  --rfa-action-dark: #15803d;
+  --rfa-secondary: #F5F5F5;
+}
+
+/* Apply custom colors */
+.bg-rfa-primary {
+  background-color: var(--rfa-primary);
+}
+
+.bg-rfa-primary-dark {
+  background-color: var(--rfa-primary-dark);
+}
+
+.bg-rfa-action {
+  background-color: var(--rfa-action);
+}
+
+.hover\:bg-rfa-action-dark:hover {
+  background-color: var(--rfa-action-dark);
+}
+
+.bg-rfa-secondary {
+  background-color: var(--rfa-secondary);
+}
+
+.text-rfa-primary {
+  color: var(--rfa-primary);
+}
+
+.text-rfa-action {
+  color: var(--rfa-action);
+}
+
+.border-rfa-action {
+  border-color: var(--rfa-action);
+}
+
+.hover\:border-rfa-action:hover {
+  border-color: var(--rfa-action);
+}
+
+.hover\:text-rfa-action:hover {
+  color: var(--rfa-action);
+}
+
+/* Enhanced RFA Styles */
+html {
+    scroll-behavior: smooth;
+}
+
+body {
+    font-family: 'Inter', 'Segoe UI', 'Roboto', sans-serif;
+    background-color: #ffffff;
+}
+
+/* Enhanced hover effects */
+.hover\:scale-105:hover {
+    transform: scale(1.05);
+}
+
+/* Smooth transitions for all interactive elements */
+.transition-all {
+    transition: all 0.3s ease;
+}
+
+/* Custom gradients with proper contrast */
+.bg-gradient-to-br {
+    background: linear-gradient(to bottom right, var(--tw-gradient-stops));
+}
+
+/* Enhanced shadow effects */
+.shadow-xl {
+    box-shadow: 0 20px 25px -5px rgba(10, 42, 67, 0.1), 0 10px 10px -5px rgba(10, 42, 67, 0.04);
+}
+
+.shadow-2xl {
+    box-shadow: 0 25px 50px -12px rgba(10, 42, 67, 0.15), 0 12px 25px -8px rgba(10, 42, 67, 0.08);
+}
+
+/* Professional focus states */
+.focus\:ring-4:focus {
+    outline: none;
+    box-shadow: 0 0 0 4px rgba(22, 163, 74, 0.1);
+}
+
+/* Smooth section transitions */
+section {
+    opacity: 1;
+    animation: fadeInUp 0.8s ease-out;
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Enhanced card hover effects */
+.hover\:shadow-lg:hover {
+    box-shadow: 0 10px 15px -3px rgba(10, 42, 67, 0.1), 0 4px 6px -2px rgba(10, 42, 67, 0.05);
+}
+
+.hover\:shadow-2xl:hover {
+    box-shadow: 0 25px 50px -12px rgba(10, 42, 67, 0.2), 0 12px 25px -8px rgba(10, 42, 67, 0.1);
+}
+
+/* Professional button styles */
+.btn-primary {
+    background: var(--rfa-action);
+    border: none;
+    transition: all 0.3s ease;
+}
+
+.btn-primary:hover {
+    background: var(--rfa-action-dark);
+    transform: translateY(-2px);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--rfa-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--rfa-action);
+}
+
+/* Enhanced card styling for plans */
+.plan-card {
+    border: 2px solid #e5e7eb;
+    transition: all 0.3s ease;
+}
+
+.plan-card:hover {
+    border-color: var(--rfa-action);
+    transform: translateY(-4px);
+}
+
+.plan-card.popular {
+    border-color: var(--rfa-action);
+    box-shadow: 0 20px 25px -5px rgba(22, 163, 74, 0.1);
+    transform: scale(1.05);
+}
+
+.plan-card.most-chosen {
+    border-color: #3b82f6;
+    box-shadow: 0 10px 15px -3px rgba(59, 130, 246, 0.1);
+}
+
+/* Icon consistency */
+.step-icon {
+    width: 2.5rem;
+    height: 2.5rem;
+    color: var(--rfa-action);
+}
+
+/* Professional typography */
+h1, h2, h3, h4, h5, h6 {
+    color: var(--rfa-primary);
+    font-weight: 700;
+}
+
+/* CTA button enhancement */
+.cta-button {
+    background: linear-gradient(135deg, var(--rfa-action), #22c55e);
+    border: none;
+    box-shadow: 0 8px 16px rgba(22, 163, 74, 0.3);
+    transition: all 0.3s ease;
+}
+
+.cta-button:hover {
+    background: linear-gradient(135deg, var(--rfa-action-dark), var(--rfa-action));
+    transform: translateY(-2px);
+    box-shadow: 0 12px 24px rgba(22, 163, 74, 0.4);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .plan-card.popular {
+        transform: none;
+    }
+    
+    .plan-card:hover {
+        transform: translateY(-2px);
+    }
+}
+
+/* Additional professional touches */
+.section-divider {
+    width: 5rem;
+    height: 0.25rem;
+    background: var(--rfa-action);
+    border-radius: 0.125rem;
+}
+
+/* === Fondo único (marca de agua) para toda la app, sin tocar JSX === */
+.App {
+  position: relative;
+  isolation: isolate; /* asegura que el pseudo-elemento quede detrás */
+}
+
+/* imagen fija, cubre toda la pantalla y todas las secciones */
+.App::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image: url("https://images.unsplash.com/photo-1589829545856-d10d557cf95f?crop=entropy&cs=srgb&fm=jpg&q=85");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: 0.12;            /* ajustá visibilidad de la marca de agua */
+  z-index: -1;              /* queda detrás de TODO el contenido */
+  pointer-events: none;     /* no bloquea clics */
+}
+
+/* por si el body tenía color sólido que tape la marca de agua */
+html, body {
+  background: transparent;
+}
+/* === Fondo único (marca de agua) para toda la app, sin tocar JSX === */
+.App {
+  position: relative;
+  isolation: isolate; /* asegura que el pseudo-elemento quede detrás */
+}
+
+/* imagen fija, cubre toda la pantalla y todas las secciones */
+.App::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image: url("https://images.unsplash.com/photo-1589829545856-d10d557cf95f?crop=entropy&cs=srgb&fm=jpg&q=85");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: 0.12;            /* ajustá visibilidad de la marca de agua */
+  z-index: -1;              /* queda detrás de TODO el contenido */
+  pointer-events: none;     /* no bloquea clics */
+}
+
+/* por si el body tenía color sólido que tape la marca de agua */
+html, body {
+  background: transparent;
+}
