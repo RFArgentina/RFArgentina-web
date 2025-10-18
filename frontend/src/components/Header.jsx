@@ -6,12 +6,18 @@ export default function Header() {
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
-    <header className="bg-rfa-primary text-white fixed top-0 left-0 w-full z-50">
-      <div className="max-w-7xl mx-auto flex items-center justify-between px-6 py-3">
+    <header className="bg-rfa-primary text-white fixed top-0 left-0 w-full z-30">
+      <div className="max-w-71xl mx-auto flex items-center justify-between px-6 py-35">
         {/* Logo */}
       <Link to="/" className="text-2xl font-bold flex items-center gap-2">
-  <span role="img" aria-label="logo" className="text-yellow-400 text-3xl">⚖️</span>
-  <span className="text-white">RFA</span>
+ <img
+  src="./favicon.png"
+  alt="RFA logo"
+  className="w-90 h-11 object-contain"
+  style={{ borderRadius: "50%", transform: "scale(1.9)" }}
+/>
+<span className="text-white text-2xl font-bold">RFA</span>
+
 </Link>
 
 
@@ -30,7 +36,7 @@ export default function Header() {
             rel="noopener noreferrer"
             className="bg-rfa-action hover:bg-rfa-action-dark text-white px-4 py-2 rounded-lg transition"
           >
-            Cargar tu caso
+            Cargar tu reclamo
           </a>
 
           {/* Mostrar solo en mobile */}

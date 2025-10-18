@@ -3,6 +3,7 @@ import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { FaInstagram, FaFacebook, FaLinkedin } from "react-icons/fa";
 import { CheckCircle, FileText, Shield, Gavel } from 'lucide-react';
+import logoFondo from '../assets/logo-fondo.png';
 
 const RFALanding = () => {
   // ---- CTA: abre el formulario (gratis) en pestaña nueva ----
@@ -22,7 +23,7 @@ const RFALanding = () => {
   const steps = [
     {
       icon: <FileText className="w-10 h-10 text-blue-900" />,
-      title: 'Cargás tu caso',
+      title: 'Cargás tu reclamo',
       description: 'Completás nuestro formulario con los detalles de tu situación financiera.',
     },
     {
@@ -37,43 +38,53 @@ const RFALanding = () => {
     },
   ];
 
-  // ---- Servicios ----
-  const services = [
-    {
-      title: 'Planes de acompañamiento mensual',
-      description: 'Te brindamos seguimiento personalizado y presión administrativa constante hasta que tu reclamo avance.',
-      features: [
-        'Seguimiento personalizado',
-        'Comunicación constante',
-        'Presión administrativa',
-        'Asesoramiento continuo'
-      ],
-    },
-    {
-      title: 'Carpetas de reclamo profesional',
-      description: 'Organizamos tu documentación y realizamos un análisis legal preliminar en una carpeta lista para estudios jurídicos aliados.',
-      features: [
-        'Documentación ordenada y lista para presentar',
-        'Análisis legal preliminar incluido',
-        'Carpeta profesional para abogados'
-      ],
-    },
-  ];
+
+ // ---- Servicios ----
+const services = [
+  {
+    title: 'Carpetas de reclamo profesional',
+    description:
+      'Organizamos y estructuramos tu documentación para que tu reclamo se presente de forma clara, completa y profesional ante la entidad correspondiente.',
+    features: [
+    'Revisión y clasificación de la información',
+    'Estructuración del caso según el tipo de reclamo',
+    'Elaboración de carpeta profesional lista para presentar ante estudios aliados' ,
+    'Optimización del expediente para una gestión más ágil',
+    ],
+  },
+ {
+  title: 'Planes de acompañamiento',
+  description:
+    'Tomamos tu caso y nos encargamos de iniciar o continuar el reclamo ante la entidad correspondiente, manteniéndote informado en cada etapa del proceso.',
+  features: [
+
+    'Gestión administrativa completa del reclamo',
+
+    'Presentación formal ante la entidad',
+
+    'Seguimiento constante del estado del caso',
+
+    'Comunicación directa durante todo el proceso',
+  ],
+},
+
+];
+
 
   // ---- Planes ----
   const plans = [
     {
-      name: "Plan Básico",
-      priceUsd: "USD 170",
-      price: "$230.000",
-      period: "30 días",
-      features: [
-        "30 días corridos de soporte",
-        "Seguimiento ante la entidad",
-        "Reclamos profesionales",
-        "Carta demo del básico"
-      ],
-      paypalUrl: "https://www.paypal.com/ncp/payment/XSX5BZAMDH3TL",
+      name: "Plan Básico Profesional",
+  priceUsd: "USD 180",
+  price: "$250.000",
+  period: "Entrega única",
+  features: [
+    "Armado completo de la carpeta profesional",
+    "Organización y revisión de la documentación",
+    "Informe de presentación para el abogado elegido",
+    "Sin seguimiento del caso ni representación ante la entidad"
+  ],
+      paypalUrl: "https://www.paypal.com/invoice/p/#Z9U84SSDGGAM8U94",
       mpUrl: "https://link.mercadopago.com/plan-basico"
     },
     {
@@ -88,7 +99,7 @@ const RFALanding = () => {
         "Asesoramiento especializado",
         "Contacto prioritario"
       ],
-      paypalUrl: "https://www.paypal.com/ncp/payment/6AGL9PNZ42CPL",
+      paypalUrl: "https://www.paypal.com/invoice/p/#SR2ZGA5FNK7S4AZW",
       mpUrl: "https://link.mercadopago.com/plan-medio"
     },
     {
@@ -97,14 +108,14 @@ const RFALanding = () => {
       price: "$900.000",
       period: "6 meses",
       features: [
-        "Sin porcentaje de devolución",
-        "Seguimiento hasta resolución",
-        "Posible escala a juicio",
-        "Acompañamiento en todo el proceso",
-        "Soporte ilimitado",
-        "Incluye asesoramiento en 1–2 casos adicionales"
+       "Seguimiento y asistencia prioritaria durante todo el proceso administrativo",
+    "Análisis y revisión avanzada de documentación",
+    "Asesoramiento continuo con nuestro equipo especializado",
+    "Comunicación directa y prioridad en consultas",
+    "Incluye acompañamiento en 1 reclamo adicional"
+
       ],
-      paypalUrl: "https://www.paypal.com/ncp/payment/N94NPZM2A7XFE",
+      paypalUrl: "https://www.paypal.com/invoice/p/#3PU5KCVCFX52KLNX",
       mpUrl: "https://link.mercadopago.com/plan-premium"
     }
   ];
@@ -115,25 +126,30 @@ const RFALanding = () => {
   return (
     <div
       className="min-h-screen text-white relative"
-      style={{
-        backgroundImage:
-          "url('https://images.unsplash.com/photo-1589829545856-d10d557cf95f?ixlib=rb-4.0.3&auto=format&fit=crop&w=1600&q=80')",
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-      }}
+     style={{
+  backgroundImage: `url(${logoFondo})`,
+  backgroundColor: 'rgba(0, 0, 41, 1)',
+
+  backgroundPosition: 'center',
+  backgroundRepeat: 'no-repeat',
+  backgroundAttachment: 'fixed',
+}}
+
+
     >
       {/* Overlay global */}
-      <div className="absolute inset-0 bg-black/60 z-0"></div>
+       {/*<div className="absolute inset-0 bg-black/60 z-0"></div>*/}
       <div className="relative z-10">
 
         {/* ================= HERO ================= */}
         <section id="inicio" className="py-20 px-6 text-center">
           <div className="max-w-4xl mx-auto">
-            <h1 className="text-4xl md:text-6xl font-extrabold leading-tight mb-6 text-blue-900 drop-shadow-[0_2px_6px_rgba(255,255,255,0.2)]">
-              Reclamos Financieros Argentina
-            </h1>
+              <h1 className="text-4xl md:text-6xl font-extrabold leading-tight mb-6 drop-shadow-[0_2px_6px_rgba(255,255,255,0.2)]" style={{ color: 'rgba(1, 1, 27, 1)' }}>
+  Reclamos Financieros Argentina
+</h1>
+
             <p className="text-lg md:text-2xl text-gray-200 mb-8 leading-relaxed">
-              Tu aliado para recuperar lo que te pertenece.
+              Tu aliado para reclamar lo que te pertenece.
             </p>
             <Button
               className="bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg shadow-md transition"
@@ -262,7 +278,14 @@ const RFALanding = () => {
                 </CardContent>
               </Card>
             ))}
+                                  <p className="text-sm text-green-600 mt-0 font-medium text-center whitespace-nowrap tracking-wide">
+                      *Sujeto a porcentaje de hasta el 10% sobre los montos recuperados, aplicable solo en casos de éxito y según evaluación del reclamo.*
+</p>
+
+
+
           </div>
+
         </section>
 
 {/* ================= PREGUNTAS FRECUENTES ================= */}
@@ -283,7 +306,7 @@ const RFALanding = () => {
       </h3>
       <p className="text-gray-200">
         Somos una consultora especializada en reclamos financieros. 
-        Te ayudamos a ordenar tu caso y dejarlo listo para que los abogados aliados puedan avanzar rápidamente.
+        Te ayudamos a ordenar tu reclamo y dejarlo listo para que los abogados aliados puedan avanzar rápidamente.
       </p>
     </div>
 
@@ -302,7 +325,7 @@ const RFALanding = () => {
         ¿Necesito un abogado para empezar el reclamo?
       </h3>
       <p className="text-gray-200">
-        No. Iniciás el proceso con RFA: organizamos tu caso y armamos la carpeta profesional. 
+        No. Iniciás el proceso con RFA: organizamos tu reclamo y armamos la carpeta profesional. 
         Si hace falta, luego lo derivamos a un estudio jurídico aliado.
       </p>
     </div>
@@ -312,7 +335,7 @@ const RFALanding = () => {
         ¿Cómo es el proceso de trabajo?
       </h3>
       <p className="text-gray-200 leading-relaxed">
-        1. Cargás tu caso en el formulario.<br />
+        1. Cargás tu reclamo en el formulario.<br />
         2. Organizamos la documentación y pruebas.<br />
         3. Entregamos una carpeta profesional lista para presentar.
       </p>
@@ -322,17 +345,30 @@ const RFALanding = () => {
       <h3 className="text-2xl font-semibold text-green-600 mb-2">
         ¿Dónde trabajan y cómo me comunico?
       </h3>
+      
       <p className="text-gray-200">
         Atendemos en todo el país de manera 100% online. 
         Podés contactarnos por WhatsApp, correo electrónico o redes sociales en cualquier momento.
       </p>
+      <div className="mt-10">
+  <h3 className="text-2xl font-semibold text-green-600 mb-2">
+    ¿Puedo abonar mi plan en cuotas?
+  </h3>
+  <p className="text-gray-200 leading-relaxed">
+    Sí. A partir del <strong>Plan Medio</strong>, los pagos pueden realizarse en 
+    <strong> dos cuotas sin interés</strong>, abonadas dentro del período de soporte 
+    establecido para cada plan.
+  </p>
+</div>
+
     </div>
     <div className="text-center mt-16">
+      
   <Button
     onClick={() => window.open('https://forms.gle/SKRiXkn5A2vAXgoL6', '_blank')}
     className="bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg shadow-md transition"
   >
-    Cargar mi caso ahora
+    Cargar mi reclamo ahora
   </Button>
 </div>
 
@@ -371,7 +407,8 @@ const RFALanding = () => {
             </div>
             <div>
               <h3 className="text-lg font-semibold mb-4">Contacto</h3>
-              <p className="text-sm">reclamosfinancierosarg@gmail.com</p>
+              <p className="text-sm">soporte@rfargentina.com</p>
+              
               <p className="text-sm">WhatsApp: En trámite</p>
             </div>
             <div>

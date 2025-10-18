@@ -89,9 +89,15 @@ html {
 }
 
 body {
-    font-family: 'Inter', 'Segoe UI', 'Roboto', sans-serif;
-    background-color: #ffffff;
+  font-family: 'Inter', 'Segoe UI', 'Roboto', sans-serif;
+  background-color: #00004e; /* Azul institucional */
+  background-image: url("./assets/logo-fondo.png");
+  background-size: contain;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
 }
+
 
 /* Enhanced hover effects */
 .hover\:scale-105:hover {
@@ -247,6 +253,7 @@ h1, h2, h3, h4, h5, h6 {
     border-radius: 0.125rem;
 }
 
+
 /* === Fondo único (marca de agua) para toda la app, sin tocar JSX === */
 .App {
   position: relative;
@@ -258,34 +265,7 @@ h1, h2, h3, h4, h5, h6 {
   content: "";
   position: fixed;
   inset: 0;
-  background-image: url("https://images.unsplash.com/photo-1589829545856-d10d557cf95f?crop=entropy&cs=srgb&fm=jpg&q=85");
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
-  opacity: 0.12;            /* ajustá visibilidad de la marca de agua */
-  z-index: -1;              /* queda detrás de TODO el contenido */
-  pointer-events: none;     /* no bloquea clics */
-}
-
-/* por si el body tenía color sólido que tape la marca de agua */
-html, body {
-  background: transparent;
-}
-/* === Fondo único (marca de agua) para toda la app, sin tocar JSX === */
-.App {
-  position: relative;
-  isolation: isolate; /* asegura que el pseudo-elemento quede detrás */
-}
-
-/* imagen fija, cubre toda la pantalla y todas las secciones */
-.App::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  background-image: url("https://images.unsplash.com/photo-1589829545856-d10d557cf95f?crop=entropy&cs=srgb&fm=jpg&q=85");
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
+ 
   opacity: 0.12;            /* ajustá visibilidad de la marca de agua */
   z-index: -1;              /* queda detrás de TODO el contenido */
   pointer-events: none;     /* no bloquea clics */
