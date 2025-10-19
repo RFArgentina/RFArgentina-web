@@ -85,7 +85,7 @@ const services = [
     "Sin seguimiento del caso ni representación ante la entidad"
   ],
       paypalUrl: "https://www.paypal.com/invoice/p/#Z9U84SSDGGAM8U94",
-      mpUrl: "https://link.mercadopago.com/plan-basico"
+      mpUrl: "https://mpago.la/2ked6DL"
     },
     {
       name: "Plan Medio",
@@ -100,7 +100,7 @@ const services = [
         "Contacto prioritario"
       ],
       paypalUrl: "https://www.paypal.com/invoice/p/#SR2ZGA5FNK7S4AZW",
-      mpUrl: "https://link.mercadopago.com/plan-medio"
+      mpUrl: "https://mpago.la/2cvjdmK"
     },
     {
       name: "Plan Premium",
@@ -116,7 +116,7 @@ const services = [
 
       ],
       paypalUrl: "https://www.paypal.com/invoice/p/#3PU5KCVCFX52KLNX",
-      mpUrl: "https://link.mercadopago.com/plan-premium"
+      mpUrl: "https://mpago.la/2fqDaVD"
     }
   ];
 
