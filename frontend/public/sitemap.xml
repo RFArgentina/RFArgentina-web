@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset
+  xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+  xmlns:xhtml="http://www.w3.org/1999/xhtml"
+  xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"
+  xmlns:news="http://www.google.com/schemas/sitemap-news/0.9"
+>
+  
+  <url>
+    <loc>https://rfargentina.com/</loc>
+    <lastmod>2025-10-22</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+    <image:image>
+      <image:loc>https://rfargentina.com/assets/logo-fondo.png</image:loc>
+      <image:title>Reclamos Financieros Argentina - Consultoría financiera con alcance legal</image:title>
+    </image:image>
+  </url>
+
+
+  <!-- Sección de reclamos -->
+  <url>
+    <loc>https://rfargentina.com/reclamos</loc>
+    <lastmod>2025-10-22</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>
+
+
+  <!-- Sección de servicios -->
+  <url>
+    <loc>https://rfargentina.com/servicios</loc>
+    <lastmod>2025-10-22</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+
+  <!-- Sección de planes -->
+  <url>
+    <loc>https://rfargentina.com/planes</loc>
+    <lastmod>2025-10-22</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+
+  <!-- Sección de preguntas frecuentes -->
+  <url>
+    <loc>https://rfargentina.com/faq</loc>
+    <lastmod>2025-10-22</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+
+
+  <!-- Sección de contacto -->
+  <url>
+    <loc>https://rfargentina.com/contacto</loc>
+    <lastmod>2025-10-22</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+
+
+  <!-- Sección educativa / publicaciones -->
+  <url>
+    <loc>https://rfargentina.com/publicaciones</loc>
+    <lastmod>2025-10-22</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+
+  <!-- Política de privacidad -->
+  <url>
+    <loc>https://rfargentina.com/politica-de-privacidad</loc>
+    <lastmod>2025-10-22</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
+  </url>
+</urlset>

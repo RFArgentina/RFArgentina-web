@@ -1,0 +1,29 @@
+# robots.txt for https://rfargentina.com/
+# Reclamos Financieros Argentina - Consultoría financiera con alcance legal
+
+
+User-agent: *
+Allow: /
+
+
+# Bloqueo de carpetas internas (si existieran en tu estructura)
+Disallow: /admin/
+Disallow: /backend/
+Disallow: /server/
+
+
+# Sitemap principal
+Sitemap: https://rfargentina.com/sitemap.xml
+
+
+# Recomendaciones SEO
+User-agent: Googlebot
+Allow: /
+
+
+User-agent: Bingbot
+Allow: /
+
+
+# Política
+Host: rfargentina.com
