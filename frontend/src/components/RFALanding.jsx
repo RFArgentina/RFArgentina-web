@@ -149,7 +149,7 @@ const services = [
 </h1>
 
             <p className="text-lg md:text-2xl text-gray-200 mb-8 leading-relaxed">
-              Tu aliado para reclamar lo que te pertenece.
+              Tu aliado para luchar por lo que te pertenece.
             </p>
             <Button
               className="bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg shadow-md transition"
