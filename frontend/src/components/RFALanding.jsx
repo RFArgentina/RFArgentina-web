@@ -155,7 +155,7 @@ const services = [
               className="bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg shadow-md transition"
               onClick={handleCTAClick}
             >
-              Comenzar mi reclamo
+              Iniciar reclamo sin costo
             </Button>
           </div>
         </section>
@@ -360,6 +360,18 @@ const services = [
     establecido para cada plan.
   </p>
 </div>
+<div className="mt-10">
+  <h3 className="text-2xl font-semibold text-green-600 mb-2">
+    ¿El primer contacto y análisis del caso tiene costo?
+  </h3>
+  <p className="text-gray-200 leading-relaxed">
+    No. El <strong>primer contacto y el análisis inicial de tu caso son totalmente gratuitos</strong>. 
+    En <strong>Reclamos Financieros Argentina (RFA)</strong> evaluamos cada situación sin compromiso 
+    y solo si el reclamo es viable, te ofrecemos las opciones de seguimiento o documentación profesional 
+    según corresponda.
+  </p>
+</div>
+
 
     </div>
     <div className="text-center mt-16">
@@ -368,7 +380,7 @@ const services = [
     onClick={() => window.open('https://forms.gle/SKRiXkn5A2vAXgoL6', '_blank')}
     className="bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg shadow-md transition"
   >
-    Cargar mi reclamo ahora
+    Cargar mi caso sin cargo
   </Button>
 </div>
 

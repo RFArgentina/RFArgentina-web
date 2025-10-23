@@ -36,7 +36,7 @@ export default function Header() {
             rel="noopener noreferrer"
             className="bg-rfa-action hover:bg-rfa-action-dark text-white px-4 py-2 rounded-lg transition"
           >
-            Cargar tu reclamo
+            Cargar tu caso GRATIS
           </a>
 
           {/* Mostrar solo en mobile */}
