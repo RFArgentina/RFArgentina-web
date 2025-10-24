@@ -421,7 +421,7 @@ const services = [
               <h3 className="text-lg font-semibold mb-4">Contacto</h3>
               <p className="text-sm">soporte@rfargentina.com</p>
               
-              <p className="text-sm">WhatsApp: En trámite</p>
+              <p className="text-sm">WhatsApp: +54 2212024379</p>
             </div>
             <div>
               <h3 className="text-lg font-semibold mb-4">Seguinos</h3>
