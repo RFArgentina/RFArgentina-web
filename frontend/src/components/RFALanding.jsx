@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { FaInstagram, FaFacebook, FaLinkedin } from "react-icons/fa";
@@ -10,6 +10,16 @@ const RFALanding = () => {
   const handleCTAClick = () => {
     window.open('https://forms.gle/SKRiXkn5A2vAXgoL6', '_blank');
   };
+ 
+  const [news, setNews] = useState([]);
+
+
+useEffect(() => {
+  fetch("http://localhost:3001/api/news")
+    .then(res => res.json())
+    .then(data => setNews(data))
+    .catch(err => console.error("Error cargando noticias:", err));
+}, []);
 
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [showModal, setShowModal] = useState(false);
@@ -144,7 +154,7 @@ const services = [
         {/* ================= HERO ================= */}
         <section id="inicio" className="py-20 px-6 text-center">
           <div className="max-w-4xl mx-auto">
-              <h1 className="text-4xl md:text-6xl font-extrabold leading-tight mb-6 drop-shadow-[0_2px_6px_rgba(255,255,255,0.2)]" style={{ color: 'rgba(1, 1, 27, 1)' }}>
+              <h1 className="text-4xl md:text-6xl font-extrabold leading-tight mb-6 drop-shadow-[0_2px_6px_rgba(255,255,255,0.2)]" style={{ color: 'rgba(12, 160, 44, 1)' }}>
   Reclamos Financieros Argentina
 </h1>
 
@@ -159,67 +169,87 @@ const services = [
             </Button>
           </div>
         </section>
+ 
+      {/* ================= QUIÉNES SOMOS ================= */}
+<section className="py-20 px-6 bg-black/40">
+  <div className="container mx-auto grid md:grid-cols-2 gap-12 items-center">
+    
+    {/* Columna Izquierda: Imagen con bloque flotante */}
+    <div className="relative">
+      <img
+        src="https://images.unsplash.com/photo-1603796846097-bee99e4a601f"
+        alt="Firma de documentos - RFA"
+        className="rounded-lg shadow-xl w-full h-24 md:h-80 object-cover"
+      />
 
-        {/* ================= QUIÉNES SOMOS ================= */}
-        <section className="py-20 px-6 bg-black/40">
-          <div className="container mx-auto grid md:grid-cols-2 gap-12 items-center">
-            <img
-              src="https://images.unsplash.com/photo-1603796846097-bee99e4a601f"
-              alt="Firma de documentos - RFA"
-              className="rounded-lg shadow-xl w-full h-64 md:h-80 object-cover"
-            />
-            <div>
-              <h2 className="text-3xl md:text-4xl font-bold text-green-600 mb-6">
-                Quiénes somos
-              </h2>
-              <p className="text-lg text-gray-200 leading-relaxed mb-6">
-                <strong className="text-green-600">RFA</strong> es una consultoría
-                especializada en reclamos financieros. Ayudamos a usuarios y empresas
-                a transformar sus quejas en casos sólidos, claros y listos para ser
-                presentados ante estudios jurídicos aliados.
-              </p>
-              <ul className="space-y-3">
-                {[
-                  "Bancos tradicionales y digitales",
-                  "Billeteras digitales",
-                  "Plataformas de inversión",
-                  "Casas de apuestas legales",
-                ].map((item, i) => (
-                  <li key={i} className="flex items-center gap-3">
-                    <CheckCircle className="w-5 h-5 text-blue-900" />
-                    {item}
+
+      {/* BLOQUE FLOTANTE DE NOTICIAS */}
+      <div className="absolute inset-0 flex items-center justify-center">
+        <div className="bg-black/70 backdrop-blur-lg text-white p-6 rounded-xl shadow-2xl w-full h-full border border-green-700">
+          <h3 className="text-teal-400 text-lg font-semibold mb-4 border-b border-green-700 pb-2 text-center sticky top-0 bg-black/80">
+            Últimas Noticias Financieras
+          </h3>
+          <ul
+            className="space-y-3 pr-3"
+            style={{
+              maxHeight: "230px", // 🔹 Scroll largo visible
+              overflowY: "scroll", // ✅ Solo este scrollea
+              scrollbarWidth: "thin",
+              scrollbarColor: "#10b981 transparent",
+            }}
+          >
+            {Array(20)
+              .fill(0)
+              .flatMap(() =>
+                news.map((n, i) => (
+                  <li
+                    key={`${i}-${Math.random()}`}
+                    className="bg-black/40 border border-green-700 p-3 rounded-md hover:bg-black/60 transition-colors"
+                  >
+                    <a
+                      href={n.link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-gray-200 hover:text-green-400 text-sm font-medium"
+                    >
+                      {n.title}
+                    </a>
                   </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        </section>
+                ))
+              )}
+          </ul>
+        </div>
+      </div>
+    </div>
 
-        {/* ================= CÓMO TRABAJAMOS ================= */}
-        <section className="py-20 px-6 bg-black/30">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-green-600 mb-6">
-              Cómo trabajamos
-            </h2>
-            <p className="text-lg text-gray-200">Nuestro proceso simple y efectivo en 3 pasos</p>
-          </div>
-          <div className="grid md:grid-cols-3 gap-8 max-w-6xl mx-auto">
-            {steps.map((step, index) => (
-              <Card key={index} className="text-center border-2 hover:border-blue-800 transition-all duration-300 hover:shadow-lg bg-white">
-                <CardHeader className="pb-4">
-                  <div className="mx-auto mb-4 w-20 h-20 bg-blue-500 rounded-full flex items-center justify-center">
-                    {step.icon}
-                  </div>
-                  <div className="text-sm font-semibold text-blue-800 mb-2">PASO {index + 1}</div>
-                  <CardTitle className="text-xl text-blue-950">{step.title}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-gray-600 leading-relaxed">{step.description}</p>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </section>
+
+    {/* Columna Derecha: Quiénes somos */}
+    <div className="md:col-start-2 md:row-start-1">
+      <h2 className="text-3xl md:text-4xl font-bold text-green-600 mb-6">
+        Quiénes somos
+      </h2>
+      <p className="text-lg text-gray-200 leading-relaxed mb-6">
+        <strong className="text-green-600">RFA</strong> es una consultoría
+        especializada en reclamos financieros. Ayudamos a usuarios y empresas
+        a transformar sus quejas en casos sólidos, claros y listos para ser
+        presentados ante estudios jurídicos aliados.
+      </p>
+      <ul className="space-y-3">
+        {[
+          "Bancos tradicionales y digitales",
+          "Billeteras digitales",
+          "Plataformas de inversión",
+          "Casas de apuestas legales",
+        ].map((item, i) => (
+          <li key={i} className="flex items-center gap-3">
+            <CheckCircle className="w-5 h-5 text-blue-900" />
+            {item}
+          </li>
+        ))}
+      </ul>
+    </div>
+  </div>
+</section>
 
         {/* ================= SERVICIOS ================= */}
         <section id="servicios" className="py-20 px-6 bg-black/40">
