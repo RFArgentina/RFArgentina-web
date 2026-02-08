@@ -1,0 +1,1303 @@
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { apiRequest } from "@/lib/api";
+import { clearToken, getToken } from "@/lib/auth";
+import { Button } from "@/components/ui/button";
+import { plans } from "@/data/plans";
+
+export default function Dashboard() {
+  const navigate = useNavigate();
+  const [cases, setCases] = useState([]);
+  const [user, setUser] = useState(null);
+  const [categoria, setCategoria] = useState("");
+  const [nombreCompleto, setNombreCompleto] = useState("");
+  const [dniCuit, setDniCuit] = useState("");
+  const [emailContacto, setEmailContacto] = useState("");
+  const [telefono, setTelefono] = useState("");
+  const [entidad, setEntidad] = useState("");
+  const [tipoEntidad, setTipoEntidad] = useState("");
+  const [montoValor, setMontoValor] = useState("");
+  const [planElegido, setPlanElegido] = useState("");
+  const [montoEscala, setMontoEscala] = useState("");
+  const [montoMoneda, setMontoMoneda] = useState("");
+  const [mediosPago, setMediosPago] = useState([]);
+  const [relato, setRelato] = useState("");
+  const [autorizacion, setAutorizacion] = useState(false);
+  const [adjuntos, setAdjuntos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [updates, setUpdates] = useState({});
+  const [expandedCaseId, setExpandedCaseId] = useState(null);
+  const [expandedCaseDetailId, setExpandedCaseDetailId] = useState(null);
+  const [expandedInquiryId, setExpandedInquiryId] = useState(null);
+  const [enterpriseInquiries, setEnterpriseInquiries] = useState([]);
+  const [showNewCaseForm, setShowNewCaseForm] = useState(true);
+  const [adminNote, setAdminNote] = useState("");
+  const [adminStatus, setAdminStatus] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+  const [filterPlan, setFilterPlan] = useState("");
+  const [filterMoneda, setFilterMoneda] = useState("");
+  const [filterEntidad, setFilterEntidad] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortKey, setSortKey] = useState("created_at");
+  const [sortDir, setSortDir] = useState("desc");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  const statusOptions = [
+    "Recibido",
+    "En análisis",
+    "Documentación solicitada",
+    "Viable (pendiente de pago)",
+    "No viable",
+    "Presentado ante entidad",
+    "En espera de respuesta",
+    "Respuesta recibida",
+    "Cerrado"
+  ];
+
+  const statusTemplates = {
+    "Recibido": "Caso recibido correctamente. En breve iniciamos el análisis.",
+    "En análisis": "Estamos revisando la documentación y el relato para determinar la viabilidad.",
+    "Documentación solicitada": "Te solicitamos documentación adicional para avanzar con el reclamo.",
+    "Viable (pendiente de pago)":
+      "Tu caso es viable. Te enviamos una carpeta demo. Para continuar, te recomendamos el Plan Seguimiento (2 cuotas sin interés).",
+    "No viable": "Luego de analizar la información, el caso no resulta viable por el momento.",
+    "Presentado ante entidad": "Reclamo presentado formalmente ante la entidad. Seguimos el proceso.",
+    "En espera de respuesta": "El reclamo ya fue enviado. Estamos esperando respuesta de la entidad.",
+    "Respuesta recibida": "Recibimos respuesta de la entidad. Te informaremos los próximos pasos.",
+    "Cerrado": "El caso fue cerrado. Si necesitás continuar, contactanos."
+  };
+
+  const normalizePlanName = (value = "") =>
+    value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+
+  const findPlanByName = (planName = "") => {
+    const normalized = normalizePlanName(planName);
+    if (!normalized) return null;
+    return plans.find((plan) => {
+      const planNameNormalized = normalizePlanName(plan.name);
+      return normalized === planNameNormalized || normalized.includes(plan.id);
+    }) || null;
+  };
+
+  const getPlanPaymentLinks = (planName = "") => {
+    const plan = findPlanByName(planName);
+    return plan.payment || null;
+  };
+
+  const isNewCase = (c) => {
+    if (!c) return false;
+    return c.estado === "Recibido";
+  };
+
+  const educationPosts = [
+
+    {
+      id: "bloqueo-cuenta",
+      title: "¿Te bloquearon la cuenta o billetera",
+      category: "Bancos y billeteras",
+      excerpt: "Guardá capturas, comprobantes y fechas. El primer reclamo formal define buena parte del resultado.",
+      checklist: ["Captura del error o bloqueo", "Últimos movimientos", "Reclamo inicial por escrito"]
+    },
+    {
+      id: "consumo-desconocido",
+      title: "Consumo desconocido en tarjeta",
+      category: "Tarjetas",
+      excerpt: "Desconocer rápido y documentar todo evita rechazos por plazos o falta de evidencia.",
+      checklist: ["Fecha del consumo", "Número de operación", "Denuncia en canal oficial"]
+    },
+    {
+      id: "plataforma-inversion",
+      title: "Problemas para retirar en plataforma",
+      category: "Inversiones",
+      excerpt: "Compará términos del servicio con la respuesta recibida y pedí constancia de gestión.",
+      checklist: ["Términos vigentes", "Solicitud de retiro", "Respuesta de soporte"]
+    }
+  ];
+
+  const isAdmin = user?.role === "admin";
+  const activeCases = useMemo(
+    () => cases.filter((c) => c.estado !== "Cerrado"),
+    [cases]
+  );
+  const hasActiveCase = activeCases.length > 0;
+  const hasTotalPlan = cases.some((c) => {
+    const plan = (c.plan_elegido || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+    return plan.includes("total");
+  });
+  const canCreateCase = !hasActiveCase || hasTotalPlan;
+
+  const adminFilteredCases = useMemo(() => {
+    if (!isAdmin) return cases;
+    const query = searchQuery.trim().toLowerCase();
+    return cases.filter((c) => {
+      const matchStatus = !filterStatus || c.estado === filterStatus;
+      const matchPlan = !filterPlan || c.plan_elegido === filterPlan;
+      const matchMoneda = !filterMoneda || c.monto_moneda === filterMoneda;
+      const entidadText = (c.entidad || "").toLowerCase();
+      const matchEntidad = !filterEntidad || entidadText.includes(filterEntidad.toLowerCase());
+      if (!query) return matchStatus && matchPlan && matchMoneda && matchEntidad;
+      const haystack = [
+        c.id,
+        c.nombre_completo,
+        c.dni_cuit,
+        c.email_contacto,
+        c.telefono,
+        c.entidad,
+        c.tipo_entidad,
+        c.user_email,
+        c.estado,
+        c.plan_elegido
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      const matchSearch = haystack.includes(query);
+      return matchStatus && matchPlan && matchMoneda && matchEntidad && matchSearch;
+    });
+  }, [cases, filterStatus, filterPlan, filterMoneda, filterEntidad, searchQuery, isAdmin]);
+
+  const sortedCases = useMemo(() => {
+    if (!isAdmin) return adminFilteredCases;
+    const sorted = [...adminFilteredCases];
+    const dir = sortDir === "asc" ? 1 : -1;
+    sorted.sort((a, b) => {
+      const va = a[sortKey] ?? "";
+      const vb = b[sortKey] ?? "";
+      if (sortKey.includes("at")) {
+        return (new Date(va).getTime() - new Date(vb).getTime()) * dir;
+      }
+      return String(va).localeCompare(String(vb), "es", { sensitivity: "base" }) * dir;
+    });
+    return sorted;
+  }, [adminFilteredCases, sortKey, sortDir, isAdmin]);
+
+  const totalPages = isAdmin ? Math.max(1, Math.ceil(sortedCases.length / pageSize)) : 1;
+  const paginatedCases = useMemo(() => {
+    if (!isAdmin) return sortedCases;
+    const start = (page - 1) * pageSize;
+    return sortedCases.slice(start, start + pageSize);
+  }, [sortedCases, page, pageSize, isAdmin]);
+
+  const visibleCases = isAdmin ? sortedCases : cases;
+
+  const getMontoBadge = (moneda, escala) => {
+    if (!moneda || !escala) return { label: "Monto sin clasificar", className: "bg-white/10 text-slate-300" };
+    const key = `${moneda}-${escala}`.toLowerCase();
+    const map = {
+      "ars-cientos": "bg-slate-700/50 text-slate-200",
+      "ars-miles": "bg-emerald-600/30 text-emerald-200",
+      "ars-millones": "bg-emerald-500/60 text-emerald-100",
+      "usd-cientos": "bg-sky-600/30 text-sky-200",
+      "usd-miles": "bg-sky-500/50 text-sky-100",
+      "usd-millones": "bg-sky-500/70 text-white"
+    };
+    return {
+      label: `${moneda} · ${escala}`,
+      className: map[key] || "bg-white/10 text-slate-300"
+    };
+  };
+
+  const getStatusBadge = (status) => {
+    const map = {
+      "Recibido": "bg-slate-600/40 text-slate-200",
+      "En análisis": "bg-sky-500/30 text-sky-200",
+      "Documentación solicitada": "bg-amber-500/30 text-amber-200",
+      "Viable (pendiente de pago)": "bg-emerald-500/60 text-emerald-100",
+      "No viable": "bg-rose-500/40 text-rose-200",
+      "Presentado ante entidad": "bg-violet-500/40 text-violet-200",
+      "En espera de respuesta": "bg-amber-400/40 text-amber-200",
+      "Respuesta recibida": "bg-cyan-500/40 text-cyan-200",
+      "Cerrado": "bg-slate-800/70 text-slate-200"
+    };
+    return map[status] || "bg-white/10 text-slate-300";
+  };
+
+  useEffect(() => {
+    if (!getToken()) {
+      navigate("/login");
+      return;
+    }
+    loadCases();
+  }, []);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    const raw = localStorage.getItem("rfa_admin_filters");
+    if (!raw) return;
+    try {
+      const saved = JSON.parse(raw);
+      setFilterStatus(saved.filterStatus || "");
+      setFilterPlan(saved.filterPlan || "");
+      setFilterMoneda(saved.filterMoneda || "");
+      setFilterEntidad(saved.filterEntidad || "");
+      setSearchQuery(saved.searchQuery || "");
+      setSortKey(saved.sortKey || "created_at");
+      setSortDir(saved.sortDir || "desc");
+      setPageSize(saved.pageSize || 10);
+    } catch {
+      localStorage.removeItem("rfa_admin_filters");
+    }
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    if (page !== 1) setPage(1);
+  }, [filterStatus, filterPlan, filterMoneda, filterEntidad, searchQuery, pageSize, sortKey, sortDir, isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages, isAdmin]);
+
+  const loadCases = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const me = await apiRequest("/me");
+      setUser(me);
+      const data = await apiRequest("/cases");
+      setCases(data || []);
+      if (me.role === "admin") {
+        const inquiries = await apiRequest("/enterprise");
+        setEnterpriseInquiries(inquiries || []);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const parseServices = (value) => {
+    if (!value) return [];
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const parseArray = (value) => {
+    if (!value) return [];
+    if (Array.isArray(value)) return value;
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const handleToggleCaseDetails = (caseId) => {
+    setExpandedCaseDetailId((prev) => (prev === caseId ? null : caseId));
+  };
+
+  const handleDownloadAttachment = async (caseId, file) => {
+    const filename = file?.filename;
+    if (!filename) return;
+    try {
+      const token = getToken();
+      const baseUrl = process.env.REACT_APP_BACKEND_URL || "";
+      const response = await fetch(
+        `${baseUrl}/api/cases/${caseId}/files/${encodeURIComponent(filename)}`,
+        {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        }
+      );
+      if (!response.ok) {
+        throw new Error("No se pudo descargar el archivo");
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = file.originalName || file.filename || "adjunto";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message || "Error al descargar adjunto");
+    }
+  };
+
+  const handleSort = (key) => {
+    if (!isAdmin) return;
+    if (sortKey === key) {
+      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  };
+
+  const saveFilters = () => {
+    const payload = {
+      filterStatus,
+      filterPlan,
+      filterMoneda,
+      filterEntidad,
+      searchQuery,
+      sortKey,
+      sortDir,
+      pageSize
+    };
+    localStorage.setItem("rfa_admin_filters", JSON.stringify(payload));
+  };
+
+  const clearFilters = () => {
+    setFilterStatus("");
+    setFilterPlan("");
+    setFilterMoneda("");
+    setFilterEntidad("");
+    setSearchQuery("");
+  };
+
+  const exportCsv = () => {
+    if (!sortedCases.length) return;
+    const headers = [
+      "ID",
+      "Cliente",
+      "Email",
+      "Entidad",
+      "Plan",
+      "Estado",
+      "Moneda",
+      "Escala",
+      "Monto",
+      "Creado"
+    ];
+    const escapeCell = (value) => {
+      const str = String(value ?? "");
+      return `"${str.replace(/"/g, '""')}"`;
+    };
+    const rows = sortedCases.map((c) => [
+      c.id,
+      c.nombre_completo || "",
+      c.email_contacto || c.user_email || "",
+      c.entidad || "",
+      c.plan_elegido || "",
+      c.estado || "",
+      c.monto_moneda || "",
+      c.monto_escala || "",
+      c.monto_valor || "",
+      c.created_at || ""
+    ]);
+    const csv = [headers, ...rows].map((row) => row.map(escapeCell).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "casos_rfa.csv";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleCreateCase = async (event) => {
+    event.preventDefault();
+    if (!canCreateCase) {
+      setError("Solo podés cargar un nuevo reclamo si tenés Plan Total.");
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    try {
+      const formData = new FormData();
+      formData.append("categoria", categoria);
+      formData.append("nombre_completo", nombreCompleto);
+      formData.append("dni_cuit", dniCuit);
+      formData.append("email_contacto", emailContacto);
+      formData.append("telefono", telefono);
+      formData.append("entidad", entidad);
+      formData.append("tipo_entidad", tipoEntidad);
+      formData.append("monto_valor", montoValor);
+      formData.append("monto_escala", montoEscala);
+      formData.append("monto_moneda", montoMoneda);
+      formData.append("plan_elegido", planElegido);
+      formData.append("medios_pago", JSON.stringify(mediosPago));
+      formData.append("relato", relato);
+      formData.append("autorizacion", autorizacion ? "true" : "false");
+      Array.from(adjuntos || []).forEach((file) => formData.append("adjuntos", file));
+
+      await apiRequest("/cases", {
+        method: "POST",
+        body: formData
+      });
+      setCategoria("");
+      setNombreCompleto("");
+      setDniCuit("");
+      setEmailContacto("");
+      setTelefono("");
+      setEntidad("");
+      setTipoEntidad("");
+      setMontoValor("");
+      setMontoEscala("");
+      setMontoMoneda("");
+      setPlanElegido("");
+      setMediosPago([]);
+      setRelato("");
+      setAutorizacion(false);
+      setAdjuntos([]);
+      await loadCases();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleToggleUpdates = async (caseId) => {
+    if (expandedCaseId === caseId) {
+      setExpandedCaseId(null);
+      return;
+    }
+    setExpandedCaseId(caseId);
+    if (!updates[caseId]) {
+      try {
+        const data = await apiRequest(`/cases/${caseId}/updates`);
+        setUpdates((prev) => ({ ...prev, [caseId]: data || [] }));
+      } catch (err) {
+        setError(err.message);
+      }
+    }
+  };
+
+  const handleLogout = () => {
+    clearToken();
+    navigate("/");
+  };
+
+  const handleAdminUpdate = async (caseId) => {
+    setSubmitting(true);
+    setError("");
+    try {
+      await apiRequest(`/cases/${caseId}/updates`, {
+        method: "POST",
+        body: JSON.stringify({ mensaje: adminNote, estado: adminStatus || null })
+      });
+      setAdminNote("");
+      setAdminStatus("");
+      const data = await apiRequest(`/cases/${caseId}/updates`);
+      setUpdates((prev) => ({ ...prev, [caseId]: data || [] }));
+      await loadCases();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleSharePost = (post) => {
+    const shareText = `${post.title} - ${post.excerpt}`;
+    const shareUrl = `${window.location.origin}/panel#educacion-${post.id}`;
+    if (navigator.share) {
+      navigator
+        .share({ title: post.title, text: shareText, url: shareUrl })
+        .catch(() => {});
+      return;
+    }
+    const waUrl = `https://wa.me/text=${encodeURIComponent(`${shareText} ${shareUrl}`)}`;
+    window.open(waUrl, "_blank");
+  };
+
+  return (
+    <div className="min-h-screen text-slate-100 px-6 py-16 pt-24">
+      <div className="max-w-6xl mx-auto">
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-10">
+          <div>
+            <h1 className="text-3xl font-bold">Panel de casos</h1>
+            <p className="text-slate-300">
+              {isAdmin ?
+                 "Panel administrador: revisá y actualizá todos los reclamos."
+                : "Cargá nuevos reclamos y seguí el estado."}
+            </p>
+          </div>
+          <Button onClick={handleLogout} className="bg-white/10 hover:bg-white/20 text-white">
+            Cerrar sesión
+          </Button>
+        </div>
+
+        <div className={`grid gap-8 ${isAdmin ? "md:grid-cols-1" : "md:grid-cols-1"}`}>
+          {!isAdmin && (
+          <div className="bg-white/10 border border-white/10 rounded-2xl p-6 backdrop-blur">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <div>
+                <h2 className="text-xl font-semibold">Nuevo reclamo</h2>
+                <p className="text-xs text-slate-400">Completá los datos básicos para iniciar el caso.</p>
+              </div>
+              <Button
+                type="button"
+                className="bg-white/10 hover:bg-white/20 text-white"
+                onClick={() => setShowNewCaseForm((prev) => !prev)}
+              >
+                {showNewCaseForm ? "Ocultar" : "Mostrar"}
+              </Button>
+            </div>
+            {!canCreateCase && (
+              <div className="mb-4 rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                Ya tenés un reclamo activo. Para cargar uno nuevo necesitás Plan Total.
+              </div>
+            )}
+            {showNewCaseForm && (
+            <form onSubmit={handleCreateCase} className="space-y-4">
+              <input
+                type="text"
+                placeholder="Nombre completo"
+                aria-label="Nombre completo"
+                className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
+                value={nombreCompleto}
+                onChange={(e) => setNombreCompleto(e.target.value)}
+                disabled={!canCreateCase}
+                required
+              />
+              <div className="grid md:grid-cols-2 gap-3">
+                <input
+                  type="text"
+                  placeholder="DNI / CUIT"
+                  aria-label="DNI o CUIT"
+                  className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
+                  value={dniCuit}
+                  onChange={(e) => setDniCuit(e.target.value)}
+                  disabled={!canCreateCase}
+                />
+                <input
+                  type="email"
+                  placeholder="Correo electrónico"
+                  className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
+                  value={emailContacto}
+                  onChange={(e) => setEmailContacto(e.target.value)}
+                  disabled={!canCreateCase}
+                  required
+                />
+              </div>
+              <input
+                type="tel"
+                placeholder="Teléfono / WhatsApp"
+                className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
+                value={telefono}
+                onChange={(e) => setTelefono(e.target.value)}
+                disabled={!canCreateCase}
+              />
+              <input
+                type="text"
+                placeholder="Entidad o empresa"
+                aria-label="Entidad o empresa"
+                className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
+                value={entidad}
+                onChange={(e) => setEntidad(e.target.value)}
+                disabled={!canCreateCase}
+              />
+              <select
+                className="w-full rounded-lg bg-slate-900/70 border border-white/20 px-4 py-3 text-white"
+                aria-label="Tipo de entidad"
+                value={tipoEntidad}
+                onChange={(e) => setTipoEntidad(e.target.value)}
+                disabled={!canCreateCase}
+              >
+                <option value="">Tipo de entidad</option>
+                <option value="Banco tradicional">Banco tradicional</option>
+                <option value="Banco digital">Banco digital</option>
+                <option value="Billetera digital">Billetera digital</option>
+                <option value="Plataforma de inversión">Plataforma de inversión</option>
+                <option value="Casa de apuestas">Casa de apuestas</option>
+                <option value="Otro">Otro</option>
+              </select>
+              <div className="grid md:grid-cols-3 gap-3">
+                <input
+                  type="text"
+                  placeholder="Monto (aprox.)"
+                  aria-label="Monto aproximado"
+                  className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
+                  value={montoValor}
+                  onChange={(e) => setMontoValor(e.target.value)}
+                  disabled={!canCreateCase}
+                />
+                <select
+                  className="w-full rounded-lg bg-slate-900/70 border border-white/20 px-4 py-3 text-white"
+                  aria-label="Escala de monto"
+                  value={montoEscala}
+                  onChange={(e) => setMontoEscala(e.target.value)}
+                  disabled={!canCreateCase}
+                >
+                  <option value="">Escala</option>
+                  <option value="Cientos">Cientos</option>
+                  <option value="Miles">Miles</option>
+                  <option value="Millones">Millones</option>
+                </select>
+                <select
+                  className="w-full rounded-lg bg-slate-900/70 border border-white/20 px-4 py-3 text-white"
+                  aria-label="Moneda"
+                  value={montoMoneda}
+                  onChange={(e) => setMontoMoneda(e.target.value)}
+                  disabled={!canCreateCase}
+                >
+                  <option value="">Moneda</option>
+                  <option value="ARS">Peso (ARS)</option>
+                  <option value="USD">Dólar (USD)</option>
+                </select>
+              </div>
+              <select
+                className="w-full rounded-lg bg-slate-900/70 border border-white/20 px-4 py-3 text-white"
+                aria-label="Plan elegido"
+                value={planElegido}
+                onChange={(e) => setPlanElegido(e.target.value)}
+                disabled={!canCreateCase}
+              >
+                <option value="">Elegir plan</option>
+                {plans.map((plan) => (
+                  <option key={plan.id} value={plan.name}>{plan.name}</option>
+                ))}
+              </select>
+              <div className="space-y-2">
+                <p className="text-sm text-slate-300">Medios de pago</p>
+                {["Transferencia bancaria", "Tarjeta de crédito", "Tarjeta de débito", "Código QR", "PayPal", "Otros"].map((medio) => (
+                  <label key={medio} className="flex items-center gap-2 text-sm text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={mediosPago.includes(medio)}
+                      disabled={!canCreateCase}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setMediosPago((prev) => [...prev, medio]);
+                        } else {
+                          setMediosPago((prev) => prev.filter((m) => m !== medio));
+                        }
+                      }}
+                    />
+                    {medio}
+                  </label>
+                ))}
+              </div>
+              <textarea
+                placeholder="Descripción del caso (contá con tus palabras qué pasó)"
+                className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400 min-h-[160px]"
+                value={relato}
+                onChange={(e) => setRelato(e.target.value)}
+                disabled={!canCreateCase}
+                required
+              />
+              <input
+                type="file"
+                aria-label="Adjuntar archivos"
+                multiple
+                className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white"
+                onChange={(e) => setAdjuntos(e.target.files)}
+                disabled={!canCreateCase}
+              />
+              <label className="flex items-start gap-2 text-sm text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={autorizacion}
+                  onChange={(e) => setAutorizacion(e.target.checked)}
+                  disabled={!canCreateCase}
+                  required
+                />
+                Autorizo a RFA a realizar gestiones administrativas y comunicaciones en mi nombre con el único fin de
+                resolver el reclamo informado.
+              </label>
+              {error && <p className="text-rose-300 text-sm">{error}</p>}
+              <Button
+                type="submit"
+                className="w-full bg-emerald-500 hover:bg-emerald-600 text-white"
+                disabled={submitting || !canCreateCase}
+              >
+                {submitting ? "Enviando..." : "Enviar reclamo"}
+              </Button>
+            </form>
+            )}
+          </div>
+          )}
+
+          <div className="space-y-4">
+            <h2 className="text-xl font-semibold">{isAdmin ? "Grilla Administrativa" : "Mis reclamos"}</h2>
+
+            {isAdmin && (
+              <div className="bg-white/10 border border-white/10 rounded-2xl p-4">
+                <div className="grid md:grid-cols-5 gap-3">
+                  <input
+                    type="text"
+                    placeholder="Busqueda global"
+                    className="rounded-lg bg-slate-900/70 border border-white/20 px-3 py-2 text-white placeholder:text-slate-400"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                  <select
+                    className="rounded-lg bg-slate-900/70 border border-white/20 px-3 py-2 text-white"
+                    value={filterStatus}
+                    onChange={(e) => setFilterStatus(e.target.value)}
+                  >
+                    <option value="">Estado</option>
+                    {statusOptions.map((status) => (
+                      <option key={status} value={status}>{status}</option>
+                    ))}
+                  </select>
+                  <select
+                    className="rounded-lg bg-slate-900/70 border border-white/20 px-3 py-2 text-white"
+                    value={filterPlan}
+                    onChange={(e) => setFilterPlan(e.target.value)}
+                  >
+                    <option value="">Plan</option>
+                    {plans.map((plan) => (
+                      <option key={plan.id} value={plan.name}>{plan.name}</option>
+                    ))}
+                  </select>
+                  <select
+                    className="rounded-lg bg-slate-900/70 border border-white/20 px-3 py-2 text-white"
+                    value={filterMoneda}
+                    onChange={(e) => setFilterMoneda(e.target.value)}
+                  >
+                    <option value="">Moneda</option>
+                    <option value="ARS">ARS</option>
+                    <option value="USD">USD</option>
+                  </select>
+                  <input
+                    type="text"
+                    placeholder="Entidad"
+                    className="rounded-lg bg-slate-900/70 border border-white/20 px-3 py-2 text-white placeholder:text-slate-400"
+                    value={filterEntidad}
+                    onChange={(e) => setFilterEntidad(e.target.value)}
+                  />
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <select
+                    className="rounded-lg bg-slate-900/70 border border-white/20 px-3 py-2 text-white"
+                    value={sortKey}
+                    onChange={(e) => setSortKey(e.target.value)}
+                  >
+                    <option value="created_at">Orden: fecha</option>
+                    <option value="nombre_completo">Orden: cliente</option>
+                    <option value="entidad">Orden: entidad</option>
+                    <option value="estado">Orden: estado</option>
+                    <option value="plan_elegido">Orden: plan</option>
+                  </select>
+                  <select
+                    className="rounded-lg bg-slate-900/70 border border-white/20 px-3 py-2 text-white"
+                    value={sortDir}
+                    onChange={(e) => setSortDir(e.target.value)}
+                  >
+                    <option value="desc">Descendente</option>
+                    <option value="asc">Ascendente</option>
+                  </select>
+                  <select
+                    className="rounded-lg bg-slate-900/70 border border-white/20 px-3 py-2 text-white"
+                    value={pageSize}
+                    onChange={(e) => setPageSize(Number(e.target.value))}
+                  >
+                    <option value={10}>10 por pagina</option>
+                    <option value={20}>20 por pagina</option>
+                    <option value={50}>50 por pagina</option>
+                  </select>
+                  <Button className="bg-white/10 hover:bg-white/20 text-white" onClick={saveFilters}>
+                    Guardar filtros
+                  </Button>
+                  <Button className="bg-white/10 hover:bg-white/20 text-white" onClick={clearFilters}>
+                    Limpiar
+                  </Button>
+                  <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={exportCsv}>
+                    Exportar CSV
+                  </Button>
+                  <span className="text-xs text-slate-300">
+                    {sortedCases.length} resultados
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {loading && <p className="text-slate-300">Cargando casos...</p>}
+            {!loading && (isAdmin ? sortedCases.length === 0 : visibleCases.length === 0) && (
+              <p className="text-slate-300">{isAdmin ? "No hay casos para los filtros seleccionados." : "Todavía no tenés reclamos cargados."}</p>
+            )}
+
+            {!loading && isAdmin && sortedCases.length > 0 && (
+              <div className="bg-white/10 border border-white/10 rounded-2xl overflow-hidden">
+                <div className="overflow-auto">
+                  <table className="w-full min-w-[980px] border-collapse">
+                    <thead>
+                      <tr className="text-left text-xs uppercase tracking-wide text-slate-300 border-b border-white/10">
+                        <th className="px-4 py-3">
+                          <button type="button" className="uppercase tracking-wide" onClick={() => handleSort("nombre_completo")}>
+                            Cliente {sortKey === "nombre_completo" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                          </button>
+                        </th>
+                        <th className="px-4 py-3">Contacto</th>
+                        <th className="px-4 py-3">
+                          <button type="button" className="uppercase tracking-wide" onClick={() => handleSort("entidad")}>
+                            Entidad {sortKey === "entidad" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                          </button>
+                        </th>
+                        <th className="px-4 py-3">Monto</th>
+                        <th className="px-4 py-3">
+                          <button type="button" className="uppercase tracking-wide" onClick={() => handleSort("plan_elegido")}>
+                            Plan {sortKey === "plan_elegido" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                          </button>
+                        </th>
+                        <th className="px-4 py-3">
+                          <button type="button" className="uppercase tracking-wide" onClick={() => handleSort("estado")}>
+                            Estado {sortKey === "estado" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                          </button>
+                        </th>
+                        <th className="px-4 py-3">
+                          <button type="button" className="uppercase tracking-wide" onClick={() => handleSort("created_at")}>
+                            Fecha {sortKey === "created_at" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                          </button>
+                        </th>
+                        <th className="px-4 py-3">Accion</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paginatedCases.map((c) => (
+                        <Fragment key={c.id}>
+                          <tr
+                            className={`border-b border-white/10 align-top ${
+                              isNewCase(c) ? "bg-emerald-500/10" : ""
+                            }`}
+                          >
+                            <td className="px-4 py-3">
+                              <div className="flex items-center gap-2">
+                                <p className="text-sm text-slate-100">{c.nombre_completo || "Sin nombre"}</p>
+                                {isNewCase(c) && (
+                                  <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide bg-emerald-500/20 text-emerald-200">
+                                    Nuevo
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-slate-400">{c.dni_cuit || "-"}</p>
+                            </td>
+                            <td className="px-4 py-3">
+                              <p className="text-sm text-slate-200">{c.user_email || c.email_contacto || "Sin email"}</p>
+                              <p className="text-xs text-slate-400">{c.telefono || "-"}</p>
+                            </td>
+                            <td className="px-4 py-3">
+                              <p className="text-sm text-slate-200">{c.entidad || "Sin entidad"}</p>
+                              <p className="text-xs text-slate-400">{c.tipo_entidad || "-"}</p>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex px-2 py-1 rounded-full text-xs font-semibold ${getMontoBadge(c.monto_moneda, c.monto_escala).className}`}>
+                                {getMontoBadge(c.monto_moneda, c.monto_escala).label}
+                              </span>
+                              <p className="text-xs text-slate-400 mt-1">{c.monto_valor || "-"}</p>
+                            </td>
+                            <td className="px-4 py-3 text-sm text-slate-200">{c.plan_elegido || "Sin plan"}</td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex px-2 py-1 rounded-full text-xs font-semibold ${getStatusBadge(c.estado)}`}>
+                                {c.estado}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-xs text-slate-400">
+                              {new Date(c.created_at).toLocaleDateString("es-AR")}
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex flex-col gap-2">
+                                <Button
+                                  className="bg-white/10 hover:bg-white/20 text-white"
+                                  onClick={() => handleToggleUpdates(c.id)}
+                                >
+                                  {expandedCaseId === c.id ? "Cerrar" : "Gestionar"}
+                                </Button>
+                                <Button
+                                  className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-100"
+                                  onClick={() => handleToggleCaseDetails(c.id)}
+                                >
+                                  {expandedCaseDetailId === c.id ? "Ocultar caso" : "Ver caso"}
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                          {expandedCaseDetailId === c.id && (
+                            <tr className="border-b border-white/10 bg-white/5">
+                              <td colSpan={8} className="px-4 py-4">
+                                <div className="grid md:grid-cols-2 gap-4 text-sm text-slate-300">
+                                  <div>
+                                    <p className="text-slate-400 text-xs uppercase mb-1">Resumen</p>
+                                    <p className="text-slate-200">{c.relato || c.detalle || "-"}</p>
+                                  </div>
+                                  <div className="space-y-2">
+                                    <div>
+                                      <p className="text-slate-400 text-xs uppercase mb-1">Contacto</p>
+                                      <p>{c.email_contacto || c.user_email || "-"}</p>
+                                      <p className="text-xs text-slate-400">{c.telefono || "-"}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-slate-400 text-xs uppercase mb-1">Plan elegido</p>
+                                      <p>{c.plan_elegido || "Sin plan"}</p>
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <p className="text-slate-400 text-xs uppercase mb-1">Monto</p>
+                                    <p>
+                                      {c.monto_moneda || "-"} {c.monto_escala || ""} {c.monto_valor || ""}
+                                    </p>
+                                  </div>
+                                  <div>
+                                    <p className="text-slate-400 text-xs uppercase mb-1">Autorizacion</p>
+                                    <p>{Number(c.autorizacion) === 1 ? "Si" : "No"}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-slate-400 text-xs uppercase mb-1">Medios de pago</p>
+                                    <p>{parseArray(c.medios_pago).join(", ") || "-"}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-slate-400 text-xs uppercase mb-1">Adjuntos</p>
+                                    <div className="space-y-2">
+                                      {parseArray(c.adjuntos).length === 0 && (
+                                        <p className="text-xs text-slate-300">Sin adjuntos</p>
+                                      )}
+                                      {parseArray(c.adjuntos).map((file) => (
+                                        <div
+                                          key={file.filename || file.originalName}
+                                          className="flex items-center justify-between gap-2 rounded-md border border-white/10 px-2 py-1"
+                                        >
+                                          <span className="text-xs text-slate-300 truncate">
+                                            {file.originalName || file.filename}
+                                          </span>
+                                          <Button
+                                            className="bg-white/10 hover:bg-white/20 text-white text-xs px-2 py-1 h-auto"
+                                            onClick={() => handleDownloadAttachment(c.id, file)}
+                                          >
+                                            Descargar
+                                          </Button>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-white/10 text-sm text-slate-300">
+                  <span>
+                    Pagina {page} de {totalPages}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      className="bg-white/10 hover:bg-white/20 text-white"
+                      onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                      disabled={page <= 1}
+                    >
+                      Anterior
+                    </Button>
+                    <Button
+                      className="bg-white/10 hover:bg-white/20 text-white"
+                      onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+                      disabled={page >= totalPages}
+                    >
+                      Siguiente
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!loading && !isAdmin && visibleCases.map((c) => (
+              <div key={c.id} className="bg-white/10 border border-white/10 rounded-2xl p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <span className={`inline-flex mt-1 px-2 py-1 rounded-full text-xs font-semibold ${getStatusBadge(c.estado)}`}>
+                      {c.estado}
+                    </span>
+                    {c.plan_elegido && <p className="text-xs text-slate-400 mt-1">Plan: {c.plan_elegido}</p>}
+                    <p className="text-xs text-slate-400 mt-1">{new Date(c.created_at).toLocaleDateString("es-AR")}</p>
+                  </div>
+                  <Button
+                    className="bg-white/10 hover:bg-white/20 text-white"
+                    onClick={() => handleToggleUpdates(c.id)}
+                  >
+                    {expandedCaseId === c.id ? "Ocultar seguimiento" : "Ver seguimiento"}
+                  </Button>
+                </div>
+                {expandedCaseId === c.id && (
+                  <div className="mt-4 space-y-3">
+                    {(updates[c.id] || []).length === 0 && (
+                      <p className="text-slate-300 text-sm">Aún no hay actualizaciones.</p>
+                    )}
+                    {(updates[c.id] || []).map((u) => (
+                      <div key={u.id} className="border border-white/10 rounded-xl p-3">
+                        <p className="text-sm text-slate-200">{u.mensaje}</p>
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                          {u.estado && (
+                            <span className={`inline-flex px-2 py-0.5 rounded-full ${getStatusBadge(u.estado)}`}>
+                              {u.estado}
+                            </span>
+                          )}
+                          <span>
+                            {u.author_email ? `Actualizado por ${u.author_email}` : "Actualización registrada"}
+                          </span>
+                          <span>{new Date(u.created_at).toLocaleDateString("es-AR")}</span>
+                        </div>
+                      </div>
+                    ))}
+                    {c.estado === "Viable (pendiente de pago)" && c.plan_elegido && getPlanPaymentLinks(c.plan_elegido) && (
+                      <div className="border border-white/10 rounded-xl p-4 bg-white/5">
+                        <p className="text-sm text-slate-300 mb-3">
+                          Tu caso es viable. Continua el proceso con el pago del plan.
+                        </p>
+                        <div className="flex flex-wrap gap-3">
+                          <Button
+                            className="bg-emerald-500 hover:bg-emerald-600 text-white"
+                            onClick={() => window.open(getPlanPaymentLinks(c.plan_elegido).mp, "_blank")}>
+                            MercadoPago
+                          </Button>
+                          <Button
+                            className="bg-white/10 hover:bg-white/20 text-white"
+                            onClick={() => window.open(getPlanPaymentLinks(c.plan_elegido).paypal, "_blank")}>
+                            PayPal
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {!isAdmin && (
+              <>
+                {/* Educación financiera (oculta por ahora) */}
+                {/* <div className="bg-white/10 border border-white/10 rounded-2xl p-5 space-y-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="text-lg font-semibold">Educación financiera</h3>
+                    <p className="text-xs text-slate-400">Guías útiles para prevenir y actuar mejor</p>
+                  </div>
+                  <div className="grid md:grid-cols-3 gap-4">
+                    {educationPosts.map((post) => (
+                      <article
+                        id={`educacion-${post.id}`}
+                        key={post.id}
+                        className="border border-white/10 rounded-xl p-4 bg-white/5"
+                      >
+                        <p className="text-xs uppercase tracking-wide text-emerald-300">{post.category}</p>
+                        <h4 className="text-base font-semibold mt-2">{post.title}</h4>
+                        <p className="text-sm text-slate-300 mt-2">{post.excerpt}</p>
+                        <ul className="mt-3 space-y-1 text-xs text-slate-300">
+                          {post.checklist.map((item) => (
+                            <li key={item}>• {item}</li>
+                          ))}
+                        </ul>
+                        <Button
+                          className="mt-4 bg-white/10 hover:bg-white/20 text-white w-full"
+                          onClick={() => handleSharePost(post)}
+                        >
+                          Compartir
+                        </Button>
+                      </article>
+                    ))}
+                  </div>
+                </div> */}
+
+                <div className="bg-white/10 border border-white/10 rounded-2xl p-5 space-y-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="text-lg font-semibold">Planes y pagos</h3>
+                    <p className="text-xs text-slate-400">Primer contacto y análisis: sin cargo</p>
+                  </div>
+                  <div className="grid md:grid-cols-3 gap-4">
+                    {plans.map((plan) => (
+                      <div key={plan.name} className="border border-white/10 rounded-xl p-4 bg-white/5">
+                        <p className="text-sm text-emerald-300 font-semibold">{plan.name}</p>
+                        <p className="text-2xl font-bold mt-1">{plan.price}</p>
+                        <p className="text-xs text-slate-400">{plan.priceUsd}</p>
+                        <p className="text-xs text-slate-400 mb-3">{plan.period}</p>
+                        <ul className="space-y-1 text-xs text-slate-300 mb-4">
+                          {plan.features.map((item) => (
+                            <li key={item}>• {item}</li>
+                          ))}
+                        </ul>
+                        <div className="flex gap-2">
+                          <Button
+                            className="bg-emerald-500 hover:bg-emerald-600 text-white w-full"
+                            onClick={() => window.open(plan.payment.mp, "_blank")}
+                          >
+                            MercadoPago
+                          </Button>
+                          <Button
+                            className="bg-slate-900 hover:bg-slate-800 text-white w-full"
+                            onClick={() => window.open(plan.payment.paypal, "_blank")}
+                          >
+                            PayPal
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {!loading && isAdmin && expandedCaseId && (() => {
+              const c = visibleCases.find((item) => item.id === expandedCaseId) || cases.find((item) => item.id === expandedCaseId);
+              if (!c) return null;
+              return (
+                <div className="bg-white/10 border border-white/10 rounded-2xl p-5 space-y-3">
+                  <h3 className="text-lg font-semibold">Gestión del caso</h3>
+                  {(updates[c.id] || []).length === 0 && (
+                    <p className="text-slate-300 text-sm">Aún no hay actualizaciones.</p>
+                  )}
+                  {(updates[c.id] || []).map((u) => (
+                    <div key={u.id} className="border border-white/10 rounded-xl p-3">
+                      <p className="text-sm text-slate-200">{u.mensaje}</p>
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                        {u.estado && (
+                          <span className={`inline-flex px-2 py-0.5 rounded-full ${getStatusBadge(u.estado)}`}>
+                            {u.estado}
+                          </span>
+                        )}
+                        <span>
+                          {u.author_email ? `Actualizado por ${u.author_email}` : "Actualización registrada"}
+                        </span>
+                        <span>{new Date(u.created_at).toLocaleDateString("es-AR")}</span>
+                      </div>
+                    </div>
+                  ))}
+                  {c.estado === "Viable (pendiente de pago)" && c.plan_elegido && getPlanPaymentLinks(c.plan_elegido) && (
+                    <div className="border border-white/10 rounded-xl p-4 bg-white/5">
+                      <p className="text-sm text-slate-300 mb-3">Caso viable. Enviar pago al cliente:</p>
+                      <div className="flex flex-wrap gap-3">
+                        <Button
+                          className="bg-emerald-500 hover:bg-emerald-600 text-white"
+                          onClick={() => window.open(getPlanPaymentLinks(c.plan_elegido).mp, "_blank")}
+                        >
+                          MercadoPago
+                        </Button>
+                        <Button
+                          className="bg-slate-900 hover:bg-slate-800 text-white"
+                          onClick={() => window.open(getPlanPaymentLinks(c.plan_elegido).paypal, "_blank")}
+                        >
+                          PayPal
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                  <div className="border border-emerald-500/30 rounded-xl p-4 bg-emerald-500/5">
+                    <h4 className="text-sm font-semibold text-emerald-200 mb-3">Nueva actualización</h4>
+                    <div className="space-y-3">
+                      <select
+                        className="w-full rounded-lg bg-slate-900/70 border border-white/20 px-4 py-2 text-white"
+                        value={adminStatus}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setAdminStatus(value);
+                          if (statusTemplates[value]) setAdminNote(statusTemplates[value]);
+                        }}
+                      >
+                        <option value="">Estado del caso</option>
+                        {statusOptions.map((status) => (
+                          <option key={status} value={status}>{status}</option>
+                        ))}
+                      </select>
+                      <textarea
+                        placeholder="Mensaje para el cliente"
+                        className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-2 text-white placeholder:text-slate-400 min-h-[120px]"
+                        value={adminNote}
+                        onChange={(e) => setAdminNote(e.target.value)}
+                      />
+                      <Button
+                        className="bg-emerald-500 hover:bg-emerald-600 text-white"
+                        onClick={() => handleAdminUpdate(c.id)}
+                        disabled={submitting}
+                      >
+                        {submitting ? "Guardando..." : "Guardar actualización"}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {!loading && isAdmin && (
+              <div className="bg-white/10 border border-white/10 rounded-2xl p-5 space-y-4">
+                <h2 className="text-xl font-semibold">Consultas de empresas</h2>
+                {enterpriseInquiries.length === 0 ? (
+                  <p className="text-slate-300 text-sm">Todavía no hay consultas registradas.</p>
+                ) : (
+                  <div className="overflow-auto">
+                    <table className="w-full min-w-[980px] border-collapse">
+                      <thead>
+                        <tr className="text-left text-xs uppercase tracking-wide text-slate-300 border-b border-white/10">
+                          <th className="px-4 py-3">Empresa</th>
+                          <th className="px-4 py-3">Rubro</th>
+                          <th className="px-4 py-3">Contacto</th>
+                          <th className="px-4 py-3">Email</th>
+                          <th className="px-4 py-3">Volumen</th>
+                          <th className="px-4 py-3">Servicios</th>
+                          <th className="px-4 py-3">Fecha</th>
+                          <th className="px-4 py-3">Acción</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {enterpriseInquiries.map((item) => (
+                          <>
+                            <tr key={item.id} className="border-b border-white/10 align-top">
+                              <td className="px-4 py-3 text-sm text-slate-100">{item.empresa}</td>
+                              <td className="px-4 py-3 text-sm text-slate-200">{item.rubro}</td>
+                              <td className="px-4 py-3 text-sm text-slate-200">
+                                {item.contacto}
+                                {item.telefono && (
+                                  <p className="text-xs text-slate-400 mt-1">{item.telefono}</p>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-sm text-slate-200">{item.email}</td>
+                              <td className="px-4 py-3 text-sm text-slate-200">{item.volumen}</td>
+                              <td className="px-4 py-3 text-xs text-slate-300">
+                                {parseServices(item.servicios).join(", ")}
+                              </td>
+                              <td className="px-4 py-3 text-xs text-slate-400">
+                                {new Date(item.created_at).toLocaleDateString("es-AR")}
+                              </td>
+                              <td className="px-4 py-3">
+                                <Button
+                                  className="bg-white/10 hover:bg-white/20 text-white"
+                                  onClick={() =>
+                                    setExpandedInquiryId((prev) => (prev === item.id ? null : item.id))
+                                  }
+                                >
+                                  {expandedInquiryId === item.id ? "Ocultar" : "Ver detalle"}
+                                </Button>
+                              </td>
+                            </tr>
+                            {expandedInquiryId === item.id && (
+                              <tr className="border-b border-white/10 bg-white/5">
+                                <td colSpan={8} className="px-4 py-4">
+                                  <div className="grid md:grid-cols-2 gap-4 text-sm text-slate-300">
+                                    <div>
+                                      <p className="text-slate-400 text-xs uppercase mb-1">Descripción</p>
+                                      <p>{item.descripcion || "-"}</p>
+                                    </div>
+                                    <div>
+                                      <p className="text-slate-400 text-xs uppercase mb-1">Comentarios adicionales</p>
+                                      <p>{item.comentarios || "Sin comentarios"}</p>
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+

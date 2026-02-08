@@ -1,49 +1,88 @@
-// src/components/Header.jsx
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { clearToken, getToken } from "@/lib/auth";
 
 export default function Header() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const navigate = useNavigate();
+  const location = useLocation();
+  const isAuthenticated = Boolean(getToken());
+  const isHome = location.pathname === "/";
+
+  const handleLogout = () => {
+    clearToken();
+    setMenuOpen(false);
+    navigate("/");
+  };
+
+  const handleNav = (sectionId) => {
+    setMenuOpen(false);
+    if (isHome) {
+      const section = document.getElementById(sectionId);
+      section.scrollIntoView({ behavior: "smooth" });
+      return;
+    }
+    navigate("/");
+    setTimeout(() => {
+      const section = document.getElementById(sectionId);
+      section.scrollIntoView({ behavior: "smooth" });
+    }, 150);
+  };
 
   return (
-    <header className="bg-rfa-primary text-white fixed top-0 left-0 w-full z-30">
-      <div className="max-w-71xl mx-auto flex items-center justify-between px-6 py-35">
-        {/* Logo */}
-      <Link to="/" className="text-2xl font-bold flex items-center gap-2">
- <img
-  src="./favicon.png"
-  alt="RFA logo"
-  className="w-90 h-11 object-contain"
-  style={{ borderRadius: "50%", transform: "scale(1.9)" }}
-/>
-<span className="text-white text-2xl font-bold">RFA</span>
-
-</Link>
-
-
-{/* Menú desktop */}
-<nav className="hidden md:flex space-x-6">
-  <a href="#inicio" className="hover:text-rfa-action transition">Inicio</a>
-  <a href="#servicios" className="hover:text-rfa-action transition">Servicios</a>
-  <a href="#contacto" className="hover:text-rfa-action transition">Contacto</a>
-</nav>
-
-        {/* Botón + hamburguesa (a la derecha) */}
-        <div className="flex items-center gap-4">
-          <a
-            href="https://forms.gle/SKRiXkn5A2vAXgoL6"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="bg-rfa-action hover:bg-rfa-action-dark text-white px-4 py-2 rounded-lg transition"
+    <header className="bg-slate-950/80 backdrop-blur text-white fixed top-0 left-0 w-full z-30 border-b border-white/10">
+      <div className="max-w-6xl mx-auto flex items-center justify-between px-6 py-3">
+        <Link to="/" className="flex items-center gap-3">
+          <span
+            className="text-emerald-300 font-bold tracking-[0.35em] text-2xl md:text-3xl"
+            style={{ fontFamily: '"Playfair Display", "Times New Roman", serif' }}
           >
-            Cargar tu caso GRATIS
-          </a>
+            RFA
+          </span>
+        </Link>
 
-          {/* Mostrar solo en mobile */}
+        <nav className="hidden md:flex space-x-6">
+          <button type="button" onClick={() => handleNav("inicio")} className="hover:text-emerald-300 transition">
+            Inicio
+          </button>
+          <button type="button" onClick={() => handleNav("servicios")} className="hover:text-emerald-300 transition">
+            Servicios
+          </button>
+          <button type="button" onClick={() => handleNav("contacto")} className="hover:text-emerald-300 transition">
+            Contacto
+          </button>
+        </nav>
+
+        <div className="flex items-center gap-4">
+          {!isAuthenticated ? (
+            <Link
+              to="/login"
+              className="hidden md:inline-flex items-center px-4 py-2 rounded-lg border border-white/20 hover:border-emerald-300 text-white transition"
+            >
+              Ingresar
+            </Link>
+          ) : (
+            <>
+              <Link
+                to="/panel"
+                className="hidden md:inline-flex items-center px-4 py-2 rounded-lg border border-white/20 hover:border-emerald-300 text-white transition"
+              >
+                Mi panel
+              </Link>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="hidden md:inline-flex items-center px-4 py-2 rounded-lg border border-white/20 hover:border-rose-300 text-white transition"
+              >
+                Salir
+              </button>
+            </>
+          )}
+
           <button
             className="md:hidden flex flex-col justify-center items-center w-8 h-8 focus:outline-none"
             onClick={() => setMenuOpen(!menuOpen)}
-            aria-label="Abrir menú"
+            aria-label="Abrir menu"
           >
             <span className={`h-1 w-6 bg-white rounded transition-all ${menuOpen ? "rotate-45 translate-y-2" : ""}`}></span>
             <span className={`h-1 w-6 bg-white rounded my-1 transition-all ${menuOpen ? "opacity-0" : ""}`}></span>
@@ -52,12 +91,31 @@ export default function Header() {
         </div>
       </div>
 
-      {/* Menú desplegable mobile */}
       {menuOpen && (
-        <div className="md:hidden bg-rfa-primary px-6 py-4 space-y-4">
-          <Link to="/" className="block hover:text-rfa-action transition" onClick={() => setMenuOpen(false)}>Inicio</Link>
-          <Link to="/services" className="block hover:text-rfa-action transition" onClick={() => setMenuOpen(false)}>Servicios</Link>
-          <Link to="/contact" className="block hover:text-rfa-action transition" onClick={() => setMenuOpen(false)}>Contacto</Link>
+        <div className="md:hidden bg-slate-950/90 px-6 py-4 space-y-4">
+          <button type="button" className="block hover:text-emerald-300 transition" onClick={() => handleNav("inicio")}>
+            Inicio
+          </button>
+          <button type="button" className="block hover:text-emerald-300 transition" onClick={() => handleNav("servicios")}>
+            Servicios
+          </button>
+          <button type="button" className="block hover:text-emerald-300 transition" onClick={() => handleNav("contacto")}>
+            Contacto
+          </button>
+          {!isAuthenticated ? (
+            <Link to="/login" className="block hover:text-emerald-300 transition" onClick={() => setMenuOpen(false)}>
+              Ingresar
+            </Link>
+          ) : (
+            <>
+              <Link to="/panel" className="block hover:text-emerald-300 transition" onClick={() => setMenuOpen(false)}>
+                Mi panel
+              </Link>
+              <button type="button" className="block hover:text-rose-300 transition" onClick={handleLogout}>
+                Salir
+              </button>
+            </>
+          )}
         </div>
       )}
     </header>
