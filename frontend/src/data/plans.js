@@ -1,57 +1,64 @@
 export const plans = [
   {
-    id: "inicial",
-    name: "Plan Inicial",
-    priceUsd: "USD 60",
-    price: "$75.000",
+    id: "plan-inicial",
+    name: "Plan Inicial - Carpeta Profesional",
+    summary:
+      "Preparamos todo el reclamo para que puedas presentarlo con respaldo documental y fundamentos claros, sin depender de terceros.",
+    price: "$70.000",
+    priceUsd: "USD 40",
     period: "Entrega unica",
     features: [
-      "Armado completo del caso en carpeta profesional",
-      "Revision basica de documentacion",
-      "Informe claro para presentar a un abogado",
-      "Entrega unica sin seguimiento posterior"
+      "Analisis del caso",
+      "Armado completo de la carpeta documental",
+      "Redaccion del reclamo y fundamentacion legal",
+      "Informe para presentar ante la entidad o abogado"
     ],
-    payment: {
-      mp: "https://mpago.la/2ked6DL",
-      paypal: "https://www.paypal.com/invoice/p/#Z9U84SSDGGAM8U94"
-    }
+    details: [
+      "Relevamiento inicial con enfoque documental y estrategico.",
+      "Clasificacion de pruebas y redaccion del reclamo en lenguaje formal.",
+      "Entrega de carpeta final lista para presentar ante entidad o abogado."
+    ]
   },
   {
-    id: "seguimiento",
-    name: "Plan Seguimiento",
+    id: "plan-gestion-basica",
+    name: "Plan Gestion Basica - Presentacion del Reclamo",
+    summary:
+      "Nos ocupamos de presentar el reclamo y hacer seguimiento administrativo hasta obtener una respuesta formal de la entidad.",
     featured: true,
-    priceUsd: "USD 110",
-    price: "$150.000",
-    period: "30 dias",
+    price: "$120.000",
+    priceUsd: "USD 75",
+    period: "Hasta respuesta de la entidad",
     features: [
-      "Seguimiento del caso durante 30 dias",
-      "Soporte por mail y WhatsApp",
-      "Mejora de documentacion si hiciera falta",
-      "Informe actualizado en caso de respuesta de la entidad",
-      "Contacto directo, sin intermediarios"
+      "Todo lo incluido en el plan inicial",
+      "Envio del reclamo formal a la entidad",
+      "Seguimiento directo hasta obtener respuesta escrita",
+      "Registro y respaldo de comunicaciones enviadas"
     ],
-    payment: {
-      mp: "https://mpago.la/2cvjdmK",
-      paypal: "https://www.paypal.com/invoice/p/#SR2ZGA5FNK7S4AZW"
-    }
+    details: [
+      "Gestion administrativa completa ante la entidad seleccionada.",
+      "Control de plazos y seguimiento para exigir respuesta fundada.",
+      "Conservacion de comunicaciones para trazabilidad y respaldo."
+    ]
   },
   {
-    id: "total",
-    name: "Plan Total",
-    priceUsd: "USD 220",
-    price: "$300.000",
-    period: "90 dias",
+    id: "plan-completo",
+    name: "Plan Completo - Seguimiento + Asistencia Extendida",
+    summary:
+      "Incluye acompanamiento intensivo, prioridad operativa y soporte continuo para casos complejos o de mayor desgaste.",
+    price: "$220.000",
+    priceUsd: "USD 130",
+    period: "Hasta 60 dias de seguimiento intensivo",
     features: [
-      "Acompanamiento durante 90 dias",
-      "Analisis y revision profunda de toda la documentacion",
-      "Preparacion de nuevas presentaciones si la entidad responde",
-      "Informe final con cierre del caso",
-      "Asistencia directa + prioridad en consultas",
-      "Incluye armado de un reclamo adicional sin costo"
+      "Todo lo anterior",
+      "Asesoramiento constante por parte del equipo",
+      "Contacto directo y priorizado",
+      "Registro actualizado del estado del reclamo",
+      "Posibilidad de sumar un segundo reclamo con descuento"
     ],
-    payment: {
-      mp: "https://mpago.la/2fqDaVD",
-      paypal: "https://www.paypal.com/invoice/p/#3PU5KCVCFX52KLNX"
-    }
+    details: [
+      "Seguimiento intensivo por hasta 60 dias con prioridad operativa.",
+      "Asistencia continua para responder requerimientos de la entidad.",
+      "Estrategia de continuidad del caso hasta agotar vias administrativas."
+    ]
   }
 ];

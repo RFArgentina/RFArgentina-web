@@ -1,41 +1,185 @@
 import dotenv from "dotenv";
 import express from "express";
 import cors from "cors";
+import cookieParser from "cookie-parser";
+import helmet from "helmet";
 import axios from "axios";
 import { parseStringPromise } from "xml2js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import sgMail from "@sendgrid/mail";
+import rateLimit from "express-rate-limit";
+import { z } from "zod";
 import initSqlJs from "sql.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { randomUUID } from "crypto";
+import { randomBytes, randomUUID, createHash } from "crypto";
 import multer from "multer";
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const NODE_ENV = String(process.env.NODE_ENV || "development").toLowerCase();
+const IS_PROD = NODE_ENV === "production";
 
 const CORS_ORIGINS = (process.env.CORS_ORIGINS || "").split(",").map((v) => v.trim()).filter(Boolean);
-const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
+const JWT_SECRET = process.env.JWT_SECRET || "";
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "").split(",").map((v) => v.trim().toLowerCase()).filter(Boolean);
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || "";
 const EMAIL_FROM = process.env.EMAIL_FROM || "";
 const CAN_SEND_EMAIL = Boolean(SENDGRID_API_KEY && EMAIL_FROM);
+const AUTH_REQUIRE_EMAIL_VERIFICATION = String(
+  process.env.AUTH_REQUIRE_EMAIL_VERIFICATION ?? "false"
+).toLowerCase() === "true";
+const EMAIL_VERIFICATION_ENABLED = AUTH_REQUIRE_EMAIL_VERIFICATION && CAN_SEND_EMAIL;
 const APP_BASE_URL = process.env.APP_BASE_URL || "http://localhost:3000";
 const SQLITE_PATH = process.env.SQLITE_PATH || "./rfa.db";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = path.resolve(__dirname, SQLITE_PATH);
 const UPLOADS_DIR = path.resolve(__dirname, "uploads");
+const TRUST_PROXY = String(process.env.TRUST_PROXY || "false").toLowerCase() === "true";
+const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 8);
+const LOGIN_LOCK_MS = Number(process.env.LOGIN_LOCK_MINUTES || 15) * 60 * 1000;
+const ACCESS_TOKEN_TTL = process.env.ACCESS_TOKEN_TTL || "15m";
+const REFRESH_TOKEN_DAYS = Number(process.env.REFRESH_TOKEN_DAYS || 30);
+const REFRESH_TOKEN_COOKIE = process.env.REFRESH_TOKEN_COOKIE || "rfa_refresh_token";
+const CSRF_COOKIE_NAME = process.env.CSRF_COOKIE_NAME || "rfa_csrf_token";
+const REFRESH_TOKEN_SECURE_COOKIE = String(process.env.REFRESH_TOKEN_SECURE_COOKIE || "false").toLowerCase() === "true";
+const REFRESH_TOKEN_SAME_SITE = process.env.REFRESH_TOKEN_SAME_SITE || "lax";
+
+if (!JWT_SECRET || JWT_SECRET.length < 32) {
+  throw new Error("JWT_SECRET debe estar configurado con al menos 32 caracteres");
+}
+
+const appBaseOrigin = (() => {
+  try {
+    return new URL(APP_BASE_URL).origin;
+  } catch {
+    return null;
+  }
+})();
+const allowedOrigins = CORS_ORIGINS.length
+  ? CORS_ORIGINS
+  : [appBaseOrigin, "http://localhost:3000", "http://127.0.0.1:3000"].filter(Boolean);
+
+function isLocalOrigin(origin) {
+  const value = String(origin || "").toLowerCase();
+  return value.includes("localhost") || value.includes("127.0.0.1");
+}
+
+function validateRuntimeSecurityConfig() {
+  const issues = [];
+  const warnings = [];
+  const sameSite = String(REFRESH_TOKEN_SAME_SITE || "lax").toLowerCase();
+
+  if (!["lax", "strict", "none"].includes(sameSite)) {
+    issues.push("REFRESH_TOKEN_SAME_SITE debe ser lax, strict o none");
+  }
+
+  if (sameSite === "none" && !REFRESH_TOKEN_SECURE_COOKIE) {
+    issues.push("REFRESH_TOKEN_SAME_SITE=none requiere REFRESH_TOKEN_SECURE_COOKIE=true");
+  }
+
+  if (AUTH_REQUIRE_EMAIL_VERIFICATION && !CAN_SEND_EMAIL) {
+    issues.push("AUTH_REQUIRE_EMAIL_VERIFICATION=true requiere SENDGRID_API_KEY y EMAIL_FROM");
+  }
+
+  if (IS_PROD) {
+    if (!REFRESH_TOKEN_SECURE_COOKIE) {
+      issues.push("En produccion REFRESH_TOKEN_SECURE_COOKIE debe ser true");
+    }
+    if (!String(APP_BASE_URL || "").toLowerCase().startsWith("https://")) {
+      issues.push("En produccion APP_BASE_URL debe usar https");
+    }
+    if (!allowedOrigins.length) {
+      issues.push("En produccion CORS_ORIGINS no puede estar vacio");
+    }
+    if (allowedOrigins.some(isLocalOrigin)) {
+      issues.push("En produccion CORS_ORIGINS no debe incluir localhost/127.0.0.1");
+    }
+    if (!TRUST_PROXY) {
+      warnings.push("TRUST_PROXY=false en produccion; revisar si usas reverse proxy");
+    }
+  }
+
+  if (warnings.length) {
+    warnings.forEach((warning) => console.warn("CONFIG WARN:", warning));
+  }
+  if (issues.length) {
+    throw new Error(`Configuracion insegura de entorno:\n- ${issues.join("\n- ")}`);
+  }
+}
+
+validateRuntimeSecurityConfig();
+
+app.set("trust proxy", TRUST_PROXY);
+app.disable("x-powered-by");
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" }
+  })
+);
+
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 600,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Demasiadas solicitudes, intenta nuevamente en unos minutos" }
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Demasiados intentos de autenticacion, espera unos minutos" }
+});
+
+const publicFormLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 40,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Demasiados envios, intenta nuevamente en unos minutos" }
+});
 
 app.use(cors({
-  origin: CORS_ORIGINS.length ? CORS_ORIGINS : "*",
+  origin(origin, cb) {
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+    return cb(new Error("Origen no permitido por CORS"));
+  },
+  credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
-  allowedHeaders: ["Content-Type", "Authorization"]
+  allowedHeaders: ["Content-Type", "Authorization", "X-CSRF-Token"]
 }));
-app.use(express.json());
+app.use(globalLimiter);
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: false, limit: "1mb" }));
+app.use(cookieParser());
+app.use((req, res, next) => {
+  const requestId = randomUUID();
+  req.requestId = requestId;
+  res.setHeader("X-Request-Id", requestId);
+  const startAt = Date.now();
+  res.on("finish", () => {
+    const elapsedMs = Date.now() - startAt;
+    console.log(
+      JSON.stringify({
+        type: "http_access",
+        requestId,
+        method: req.method,
+        path: req.originalUrl,
+        statusCode: res.statusCode,
+        elapsedMs
+      })
+    );
+  });
+  next();
+});
 
 let db = null;
 
@@ -49,7 +193,19 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 
 const upload = multer({
   dest: UPLOADS_DIR,
-  limits: { fileSize: 25 * 1024 * 1024 }
+  limits: { fileSize: 25 * 1024 * 1024, files: 5 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = [
+      "application/pdf",
+      "image/png",
+      "image/jpeg",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "text/plain"
+    ];
+    if (allowed.includes(file.mimetype)) return cb(null, true);
+    return cb(new multer.MulterError("LIMIT_UNEXPECTED_FILE", file.fieldname));
+  }
 });
 
 function maybeUpload(req, res, next) {
@@ -118,6 +274,7 @@ function initDb() {
       author_id TEXT,
       mensaje TEXT NOT NULL,
       estado TEXT,
+      prioridad TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(case_id) REFERENCES cases(id) ON DELETE CASCADE
     );
@@ -135,6 +292,53 @@ function initDb() {
       comentarios TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS auth_login_audit (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      email TEXT NOT NULL,
+      ip TEXT NOT NULL,
+      user_agent TEXT,
+      success INTEGER NOT NULL DEFAULT 0,
+      reason TEXT,
+      attempts INTEGER,
+      lock_until TEXT,
+      request_id TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_auth_login_audit_created_at ON auth_login_audit(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_auth_login_audit_email ON auth_login_audit(email);
+    CREATE TABLE IF NOT EXISTS refresh_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      replaced_by_token_id TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_ip TEXT,
+      user_agent TEXT,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id);
+    CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at ON refresh_tokens(expires_at);
+    CREATE TABLE IF NOT EXISTS security_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      event_type TEXT NOT NULL,
+      resource_type TEXT,
+      resource_id TEXT,
+      success INTEGER NOT NULL DEFAULT 1,
+      details TEXT,
+      ip TEXT,
+      user_agent TEXT,
+      request_id TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_security_events_created_at ON security_events(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_security_events_type ON security_events(event_type);
+    CREATE INDEX IF NOT EXISTS idx_security_events_user_id ON security_events(user_id);
   `);
   const columns = all("PRAGMA table_info(cases)").map((c) => c.name);
   const addColumn = (name, type) => {
@@ -156,6 +360,16 @@ function initDb() {
   addColumn("autorizacion", "INTEGER");
   addColumn("adjuntos", "TEXT");
   addColumn("plan_elegido", "TEXT");
+  addColumn("case_code", "TEXT");
+  addColumn("empresa", "TEXT");
+  addColumn("prioridad", "TEXT");
+  addColumn("fecha_caso", "TEXT");
+  addColumn("canal_origen", "TEXT");
+  addColumn("enterprise_user_id", "TEXT");
+  const updatesColumns = all("PRAGMA table_info(case_updates)").map((c) => c.name);
+  if (!updatesColumns.includes("prioridad")) {
+    db.exec("ALTER TABLE case_updates ADD COLUMN prioridad TEXT;");
+  }
   const userColumns = all("PRAGMA table_info(users)").map((c) => c.name);
   const addUserColumn = (name, type) => {
     if (!userColumns.includes(name)) {
@@ -166,6 +380,7 @@ function initDb() {
   addUserColumn("verification_token", "TEXT");
   addUserColumn("verification_sent_at", "TEXT");
   run("UPDATE users SET email_verified = 1 WHERE email_verified IS NULL");
+  run("DELETE FROM refresh_tokens WHERE expires_at <= CURRENT_TIMESTAMP OR revoked_at IS NOT NULL");
   persistDb();
 }
 
@@ -176,6 +391,311 @@ function isNonEmptyString(value) {
 function isValidEmail(value) {
   if (!isNonEmptyString(value)) return false;
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+function isStrongPassword(value) {
+  if (!isNonEmptyString(value)) return false;
+  const pwd = value.trim();
+  if (pwd.length < 8 || pwd.length > 72) return false;
+  const hasLetter = /[A-Za-z]/.test(pwd);
+  const hasNumber = /\d/.test(pwd);
+  return hasLetter && hasNumber;
+}
+
+function cleanText(value, max = 1000) {
+  if (value == null) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  return text.slice(0, max);
+}
+
+function normalizeCompareText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const registerSchema = z.object({
+  email: z.string().trim().email(),
+  password: z.string().min(8).max(72),
+  account_type: z.string().trim().optional()
+});
+
+const loginSchema = z.object({
+  email: z.string().trim().email(),
+  password: z.string().min(1).max(200),
+  account_type: z.string().trim().optional()
+});
+
+const resendVerificationSchema = z.object({
+  email: z.string().trim().email()
+});
+
+const enterpriseInquirySchema = z.object({
+  empresa: z.string().trim().min(2).max(120),
+  rubro: z.string().trim().min(2).max(120),
+  contacto: z.string().trim().min(2).max(120),
+  email: z.string().trim().email(),
+  telefono: z.union([z.string().trim().max(60), z.null(), z.undefined()]),
+  servicios: z.union([z.string(), z.array(z.string()), z.null(), z.undefined()]),
+  descripcion: z.string().trim().min(5).max(4000),
+  volumen: z.string().trim().min(1).max(60),
+  comentarios: z.union([z.string().trim().max(2000), z.null(), z.undefined()])
+});
+
+const caseCreateSchema = z.object({
+  categoria: z.union([z.string().trim().max(120), z.null(), z.undefined()]),
+  nombre_completo: z.union([z.string().trim().max(120), z.null(), z.undefined()]),
+  dni_cuit: z.union([z.string().trim().max(40), z.null(), z.undefined()]),
+  email_contacto: z.union([z.string().trim().email(), z.null(), z.undefined(), z.literal("")]),
+  telefono: z.union([z.string().trim().max(60), z.null(), z.undefined()]),
+  entidad: z.union([z.string().trim().max(160), z.null(), z.undefined()]),
+  tipo_entidad: z.union([z.string().trim().max(160), z.null(), z.undefined()]),
+  monto_valor: z.union([z.string().trim().max(40), z.null(), z.undefined()]),
+  monto_escala: z.union([z.string().trim().max(40), z.null(), z.undefined()]),
+  monto_moneda: z.union([z.string().trim().max(20), z.null(), z.undefined()]),
+  medios_pago: z.any().optional(),
+  relato: z.union([z.string().trim().max(4000), z.null(), z.undefined()]),
+  autorizacion: z.union([z.boolean(), z.string(), z.null(), z.undefined()]),
+  plan_elegido: z.union([z.string().trim().max(120), z.null(), z.undefined()]),
+  detalle: z.union([z.string().trim().max(4000), z.null(), z.undefined()])
+});
+
+const caseUpdateSchema = z.object({
+  mensaje: z.union([z.string().trim().max(3000), z.null(), z.undefined()]),
+  estado: z.union([z.string().trim().max(120), z.null(), z.undefined()]),
+  prioridad: z.union([z.string().trim().max(20), z.null(), z.undefined()])
+});
+
+function validateBody(schema, payload) {
+  const parsed = schema.safeParse(payload || {});
+  if (!parsed.success) {
+    const first = parsed.error.issues?.[0];
+    const field = first?.path?.[0] ? String(first.path[0]) : "payload";
+    return { ok: false, error: `Campo invalido: ${field}` };
+  }
+  return { ok: true, data: parsed.data };
+}
+
+function hashRefreshToken(token) {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function getRefreshCookieOptions() {
+  const sameSiteRaw = String(REFRESH_TOKEN_SAME_SITE || "lax").toLowerCase();
+  const sameSite = ["lax", "strict", "none"].includes(sameSiteRaw) ? sameSiteRaw : "lax";
+  return {
+    httpOnly: true,
+    secure: REFRESH_TOKEN_SECURE_COOKIE,
+    sameSite,
+    path: "/",
+    maxAge: REFRESH_TOKEN_DAYS * 24 * 60 * 60 * 1000
+  };
+}
+
+function getCsrfCookieOptions() {
+  const refreshOptions = getRefreshCookieOptions();
+  return {
+    httpOnly: false,
+    secure: refreshOptions.secure,
+    sameSite: refreshOptions.sameSite,
+    path: refreshOptions.path,
+    maxAge: refreshOptions.maxAge
+  };
+}
+
+function clearRefreshCookie(res) {
+  const options = getRefreshCookieOptions();
+  res.clearCookie(REFRESH_TOKEN_COOKIE, {
+    httpOnly: true,
+    secure: options.secure,
+    sameSite: options.sameSite,
+    path: options.path
+  });
+}
+
+function clearCsrfCookie(res) {
+  const options = getCsrfCookieOptions();
+  res.clearCookie(CSRF_COOKIE_NAME, {
+    httpOnly: false,
+    secure: options.secure,
+    sameSite: options.sameSite,
+    path: options.path
+  });
+}
+
+function setCsrfCookie(res) {
+  const token = randomBytes(24).toString("hex");
+  res.cookie(CSRF_COOKIE_NAME, token, getCsrfCookieOptions());
+  return token;
+}
+
+function getRequestIp(req) {
+  return cleanText(req.ip || req.connection?.remoteAddress || "unknown", 80) || "unknown";
+}
+
+function requireCsrfToken(req, res) {
+  const csrfCookie = cleanText(req.cookies?.[CSRF_COOKIE_NAME], 120);
+  const csrfHeader = cleanText(req.headers["x-csrf-token"], 120);
+  if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
+    res.status(403).json({ error: "Token CSRF invalido" });
+    return false;
+  }
+  return true;
+}
+
+function issueAccessToken(user) {
+  return jwt.sign({ sub: user.id, role: user.role }, JWT_SECRET, { expiresIn: ACCESS_TOKEN_TTL });
+}
+
+function createRefreshTokenSession(req, userId) {
+  const token = randomBytes(48).toString("hex");
+  const tokenHash = hashRefreshToken(token);
+  const sessionId = randomUUID();
+  const expiresAt = new Date(Date.now() + REFRESH_TOKEN_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const ip = cleanText(req.ip || req.connection?.remoteAddress || "unknown", 80);
+  const userAgent = cleanText(req.headers["user-agent"] || "", 255);
+  run(
+    `INSERT INTO refresh_tokens
+    (id, user_id, token_hash, expires_at, created_ip, user_agent)
+    VALUES (?, ?, ?, ?, ?, ?)`,
+    [sessionId, userId, tokenHash, expiresAt, ip, userAgent]
+  );
+  return { token, sessionId, expiresAt };
+}
+function revokeRefreshTokenByHash(tokenHash, replacedByTokenId = null) {
+  if (!tokenHash) return;
+  run(
+    "UPDATE refresh_tokens SET revoked_at = CURRENT_TIMESTAMP, replaced_by_token_id = ? WHERE token_hash = ? AND revoked_at IS NULL",
+    [replacedByTokenId, tokenHash]
+  );
+}
+
+const loginAttempts = new Map();
+
+function getLoginAttemptKey(req, emailNorm) {
+  const ip = String(req.ip || req.connection?.remoteAddress || "unknown");
+  return `${emailNorm}::${ip}`;
+}
+
+function getLoginAttemptState(key) {
+  const current = loginAttempts.get(key);
+  if (!current) return null;
+  if (current.lockUntil && Date.now() > current.lockUntil) {
+    loginAttempts.delete(key);
+    return null;
+  }
+  return current;
+}
+
+function registerLoginFailure(key) {
+  const current = getLoginAttemptState(key) || { attempts: 0, lockUntil: null };
+  const attempts = current.attempts + 1;
+  const lockUntil = attempts >= LOGIN_MAX_ATTEMPTS ? Date.now() + LOGIN_LOCK_MS : current.lockUntil;
+  loginAttempts.set(key, { attempts, lockUntil });
+  return { attempts, lockUntil };
+}
+
+function clearLoginFailures(key) {
+  loginAttempts.delete(key);
+}
+
+function logLoginAudit(req, { userId = null, email = "", success = false, reason = "", attempts = null, lockUntil = null }) {
+  try {
+    const ip = getRequestIp(req);
+    const userAgent = cleanText(req.headers["user-agent"] || "", 255);
+    run(
+      `INSERT INTO auth_login_audit
+      (id, user_id, email, ip, user_agent, success, reason, attempts, lock_until, request_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        randomUUID(),
+        userId,
+        cleanText(email, 180) || "unknown",
+        ip,
+        userAgent,
+        success ? 1 : 0,
+        cleanText(reason, 120),
+        attempts,
+        lockUntil ? new Date(lockUntil).toISOString() : null,
+        req.requestId || null
+      ]
+    );
+  } catch (err) {
+    console.error("LOGIN AUDIT ERR:", req.requestId, err.message);
+  }
+}
+
+function normalizeHeader(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function parseCsvLine(line) {
+  const out = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (ch === "," && !inQuotes) {
+      out.push(current);
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  out.push(current);
+  return out.map((v) => String(v || "").trim());
+}
+
+function parseCsvText(csvText) {
+  const lines = String(csvText || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) return [];
+  const headers = parseCsvLine(lines[0]).map(normalizeHeader);
+  const rows = [];
+  for (let i = 1; i < lines.length; i += 1) {
+    const cols = parseCsvLine(lines[i]);
+    const row = {};
+    headers.forEach((header, idx) => {
+      row[header] = cols[idx] ?? "";
+    });
+    rows.push(row);
+  }
+  return rows;
+}
+
+function canAccessCase(user, caso) {
+  if (!user || !caso) return false;
+  if (user.role === "admin") return true;
+  if (user.role === "enterprise") return caso.enterprise_user_id === user.sub;
+  return caso.user_id === user.sub;
+}
+
+function getSendgridErrorDetail(err) {
+  const code = err?.code || err?.response?.statusCode || "UNKNOWN";
+  const body = err?.response?.body;
+  const errors = Array.isArray(body?.errors) ? body.errors.map((e) => e?.message).filter(Boolean) : [];
+  const message = errors[0] || err?.message || "Fallo de envio";
+  return { code, message };
 }
 
 async function sendStatusEmail({ to, status, message, caseId }) {
@@ -218,12 +738,51 @@ async function sendVerificationEmail({ to, token }) {
       text
     });
   } catch (err) {
-    console.error("EMAIL VERIFY ERR:", err.message);
+    const detail = getSendgridErrorDetail(err);
+    console.error("EMAIL VERIFY ERR:", detail.code, detail.message);
+    const wrapped = new Error(detail.message);
+    wrapped.code = "EMAIL_SEND_FAILED";
+    throw wrapped;
   }
 }
 
+function logSecurityEvent(req, {
+  userId = null,
+  eventType = "",
+  resourceType = null,
+  resourceId = null,
+  success = true,
+  details = null
+}) {
+  try {
+    const ip = getRequestIp(req);
+    const userAgent = cleanText(req.headers["user-agent"] || "", 255);
+    const detailsText = details == null
+      ? null
+      : cleanText(typeof details === "string" ? details : JSON.stringify(details), 2000);
+    run(
+      `INSERT INTO security_events
+      (id, user_id, event_type, resource_type, resource_id, success, details, ip, user_agent, request_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        randomUUID(),
+        userId,
+        cleanText(eventType, 80) || "unknown_event",
+        cleanText(resourceType, 80),
+        cleanText(resourceId, 120),
+        success ? 1 : 0,
+        detailsText,
+        ip,
+        userAgent,
+        req.requestId || null
+      ]
+    );
+  } catch (err) {
+    console.error("SECURITY EVENT ERR:", req.requestId, err.message);
+  }
+}
 function signToken(user) {
-  return jwt.sign({ sub: user.id, role: user.role }, JWT_SECRET, { expiresIn: "7d" });
+  return issueAccessToken(user);
 }
 
 function authRequired(req, res, next) {
@@ -235,10 +794,9 @@ function authRequired(req, res, next) {
     req.user = jwt.verify(token, JWT_SECRET);
     return next();
   } catch {
-    return res.status(401).json({ error: "Token inválido" });
+    return res.status(401).json({ error: "Token invalido" });
   }
 }
-
 function adminOnly(req, res, next) {
   if (req.user?.role !== "admin") return res.status(403).json({ error: "Acceso restringido" });
   return next();
@@ -253,10 +811,10 @@ app.get("/health", (_req, res) => {
 });
 
 app.get("/api/auth/config", (_req, res) => {
-  res.json({ emailVerificationEnabled: CAN_SEND_EMAIL });
+  res.json({ emailVerificationEnabled: EMAIL_VERIFICATION_ENABLED });
 });
 
-// ---- Noticias RSS (caché 30 min) ----
+// ---- Noticias RSS (cache 30 min) ----
 const FEEDS = [
   "https://news.google.com/rss/search?q=site:ambito.com+OR+site:iprofesional.com+reclamos+financieros&hl=es-419&gl=AR&ceid=AR:es-419",
   "https://news.google.com/rss/search?q=billeteras+digitales+reclamos&hl=es-419&gl=AR&ceid=AR:es-419",
@@ -302,8 +860,12 @@ app.get("/api/noticias", handleNoticias);
 app.get("/api/news", handleNoticias);
 
 // -------------------- EMPRESAS --------------------
-app.post("/api/enterprise", async (req, res) => {
+app.post("/api/enterprise", publicFormLimiter, async (req, res) => {
   try {
+    const validated = validateBody(enterpriseInquirySchema, req.body);
+    if (!validated.ok) {
+      return res.status(400).json({ error: validated.error });
+    }
     const {
       empresa,
       rubro,
@@ -314,32 +876,32 @@ app.post("/api/enterprise", async (req, res) => {
       descripcion,
       volumen,
       comentarios
-    } = req.body || {};
-
-    if (!isNonEmptyString(empresa) || !isNonEmptyString(rubro) || !isNonEmptyString(contacto) ||
-        !isNonEmptyString(email) || !isNonEmptyString(descripcion) || !isNonEmptyString(volumen)) {
-      return res.status(400).json({ error: "Faltan campos obligatorios" });
-    }
-    if (!isValidEmail(email)) {
-      return res.status(400).json({ error: "Email inválido" });
-    }
+    } = validated.data;
 
     const inquiryId = randomUUID();
+    const empresaClean = cleanText(empresa, 120);
+    const rubroClean = cleanText(rubro, 120);
+    const contactoClean = cleanText(contacto, 120);
+    const emailClean = cleanText(email, 180)?.toLowerCase();
+    const telefonoClean = cleanText(telefono, 60);
+    const descripcionClean = cleanText(descripcion, 4000);
+    const volumenClean = cleanText(volumen, 60);
+    const comentariosClean = cleanText(comentarios, 2000);
     run(
       `INSERT INTO enterprise_inquiries (
         id, empresa, rubro, contacto, email, telefono, servicios, descripcion, volumen, comentarios
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         inquiryId,
-        empresa.trim(),
-        rubro.trim(),
-        contacto.trim(),
-        email.trim().toLowerCase(),
-        telefono || null,
+        empresaClean,
+        rubroClean,
+        contactoClean,
+        emailClean,
+        telefonoClean,
         typeof servicios === "string" ? servicios : JSON.stringify(servicios || []),
-        descripcion.trim(),
-        volumen.trim(),
-        comentarios || null
+        descripcionClean,
+        volumenClean,
+        comentariosClean
       ]
     );
     const created = get("SELECT * FROM enterprise_inquiries WHERE id = ?", [inquiryId]);
@@ -358,21 +920,119 @@ app.get("/api/enterprise", authRequired, adminOnly, async (_req, res) => {
   }
 });
 
-// -------------------- AUTH --------------------
-app.post("/api/auth/register", async (req, res) => {
+app.get("/api/enterprise-users", authRequired, adminOnly, async (_req, res) => {
   try {
-    const { email, password } = req.body || {};
-    if (!isNonEmptyString(email) || !isNonEmptyString(password)) {
-      return res.status(400).json({ error: "Email y contraseña son obligatorios" });
+    const rows = all(
+      "SELECT id, email, created_at FROM users WHERE role = 'enterprise' ORDER BY email ASC"
+    );
+    return res.json(rows);
+  } catch (err) {
+    return res.status(500).json({ error: "Error al listar usuarios empresa" });
+  }
+});
+
+app.get("/api/security/login-audit", authRequired, adminOnly, async (req, res) => {
+  try {
+    const limitRaw = Number(req.query.limit || 200);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 1000) : 200;
+    const email = cleanText(req.query.email, 180);
+    if (email) {
+      const rows = all(
+        `SELECT id, user_id, email, ip, user_agent, success, reason, attempts, lock_until, request_id, created_at
+         FROM auth_login_audit
+         WHERE lower(email) = lower(?)
+         ORDER BY created_at DESC
+         LIMIT ?`,
+        [email, limit]
+      );
+      return res.json(rows);
     }
-    if (!isValidEmail(email)) {
-      return res.status(400).json({ error: "Email inválido" });
+    const rows = all(
+      `SELECT id, user_id, email, ip, user_agent, success, reason, attempts, lock_until, request_id, created_at
+       FROM auth_login_audit
+       ORDER BY created_at DESC
+       LIMIT ?`,
+      [limit]
+    );
+    return res.json(rows);
+  } catch (err) {
+    return res.status(500).json({ error: "Error al listar auditoria de login" });
+  }
+});
+
+app.get("/api/security/events", authRequired, adminOnly, async (req, res) => {
+  try {
+    const limitRaw = Number(req.query.limit || 200);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 1000) : 200;
+    const eventType = cleanText(req.query.event_type, 80);
+    const userId = cleanText(req.query.user_id, 120);
+
+    if (eventType) {
+      const rows = all(
+        `SELECT id, user_id, event_type, resource_type, resource_id, success, details, ip, user_agent, request_id, created_at
+         FROM security_events
+         WHERE event_type = ?
+         ORDER BY created_at DESC
+         LIMIT ?`,
+        [eventType, limit]
+      );
+      return res.json(rows);
     }
-    const emailNorm = email.trim().toLowerCase();
+
+    if (userId) {
+      const rows = all(
+        `SELECT id, user_id, event_type, resource_type, resource_id, success, details, ip, user_agent, request_id, created_at
+         FROM security_events
+         WHERE user_id = ?
+         ORDER BY created_at DESC
+         LIMIT ?`,
+        [userId, limit]
+      );
+      return res.json(rows);
+    }
+
+    const rows = all(
+      `SELECT id, user_id, event_type, resource_type, resource_id, success, details, ip, user_agent, request_id, created_at
+       FROM security_events
+       ORDER BY created_at DESC
+       LIMIT ?`,
+      [limit]
+    );
+    return res.json(rows);
+  } catch (err) {
+    return res.status(500).json({ error: "Error al listar eventos de seguridad" });
+  }
+});
+
+// -------------------- AUTH --------------------
+app.post("/api/auth/register", authLimiter, async (req, res) => {
+  try {
+    const validated = validateBody(registerSchema, req.body);
+    if (!validated.ok) {
+      return res.status(400).json({ error: validated.error });
+    }
+    const { email, password, account_type } = validated.data;
+    const requestedAccountType = String(account_type || "user").trim().toLowerCase();
+    if (requestedAccountType === "enterprise") {
+      return res.status(403).json({
+        error: "El alta de cuentas empresa se realiza solo por administracion de RFA"
+      });
+    }
+    if (!isStrongPassword(password)) {
+      return res.status(400).json({
+        error: "La contrasena debe tener entre 8 y 72 caracteres, con letras y numeros"
+      });
+    }
+
+    const emailNorm = cleanText(email, 180)?.toLowerCase();
+    if (!emailNorm) {
+      return res.status(400).json({ error: "Email invalido" });
+    }
+
     const passwordHash = await bcrypt.hash(password, 10);
     const role = ADMIN_EMAILS.includes(emailNorm) ? "admin" : "user";
-    const verificationToken = randomUUID();
-    if (!CAN_SEND_EMAIL) {
+    const verificationToken = AUTH_REQUIRE_EMAIL_VERIFICATION ? randomUUID() : null;
+    if (AUTH_REQUIRE_EMAIL_VERIFICATION && !CAN_SEND_EMAIL) {
       return res.status(503).json({
         error: "Verificacion por email no configurada en el servidor",
         code: "EMAIL_SERVICE_NOT_CONFIGURED"
@@ -382,68 +1042,310 @@ app.post("/api/auth/register", async (req, res) => {
     const userId = randomUUID();
     run(
       "INSERT INTO users (id, email, password_hash, role, email_verified, verification_token, verification_sent_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
-      [userId, emailNorm, passwordHash, role, 0, verificationToken]
+      [userId, emailNorm, passwordHash, role, AUTH_REQUIRE_EMAIL_VERIFICATION ? 0 : 1, verificationToken]
     );
-    await sendVerificationEmail({ to: emailNorm, token: verificationToken });
-    return res.status(201).json({ message: "Registro creado. Verifica tu email para activar la cuenta." });
-  } catch (err) {
-    if (String(err.message || "").includes("UNIQUE")) {
-      return res.status(409).json({ error: "El email ya está registrado" });
+    logSecurityEvent(req, {
+      userId,
+      eventType: "auth_register",
+      resourceType: "user",
+      resourceId: userId,
+      success: true,
+      details: { email: emailNorm, role }
+    });
+    if (AUTH_REQUIRE_EMAIL_VERIFICATION) {
+      await sendVerificationEmail({ to: emailNorm, token: verificationToken });
+      return res.status(201).json({ message: "Registro creado. Verifica tu email para activar la cuenta." });
     }
-    console.error("REGISTER ERR:", err.message);
+    return res.status(201).json({ message: "Registro creado correctamente." });
+  } catch (err) {
+    if (err?.code === "EMAIL_SEND_FAILED") {
+      return res.status(502).json({ error: `No se pudo enviar el email de verificacion: ${err.message}` });
+    }
+    if (String(err.message || "").includes("UNIQUE")) {
+      return res.status(409).json({ error: "El email ya esta registrado" });
+    }
+    console.error("REGISTER ERR:", req.requestId, err.message);
     return res.status(500).json({ error: "Error al registrar" });
   }
 });
 
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", authLimiter, async (req, res) => {
   try {
-    const { email, password } = req.body || {};
-    if (!isNonEmptyString(email) || !isNonEmptyString(password)) {
-      return res.status(400).json({ error: "Email y contraseña son obligatorios" });
+    const validated = validateBody(loginSchema, req.body);
+    if (!validated.ok) {
+      return res.status(400).json({ error: validated.error });
     }
-    if (!isValidEmail(email)) {
-      return res.status(400).json({ error: "Email inválido" });
+    const { email, password } = validated.data;
+    const emailNorm = cleanText(email, 180)?.toLowerCase();
+    if (!emailNorm) {
+      return res.status(400).json({ error: "Email invalido" });
     }
-    const emailNorm = email.trim().toLowerCase();
-    let user = get("SELECT id, email, password_hash, role, email_verified FROM users WHERE email = ?", [emailNorm]);
-    if (!user) return res.status(401).json({ error: "Credenciales inválidas" });
 
-    if (!user.email_verified) {
+    const attemptKey = getLoginAttemptKey(req, emailNorm);
+    const attemptState = getLoginAttemptState(attemptKey);
+    if (attemptState?.lockUntil) {
+      const waitSeconds = Math.ceil((attemptState.lockUntil - Date.now()) / 1000);
+      logLoginAudit(req, {
+        email: emailNorm,
+        success: false,
+        reason: "locked",
+        attempts: attemptState.attempts || null,
+        lockUntil: attemptState.lockUntil
+      });
+      return res.status(429).json({
+        error: "Cuenta temporalmente bloqueada por intentos fallidos",
+        retryAfterSeconds: Math.max(waitSeconds, 1)
+      });
+    }
+
+    let user = get("SELECT id, email, password_hash, role, email_verified FROM users WHERE email = ?", [emailNorm]);
+    if (!user) {
+      const fail = registerLoginFailure(attemptKey);
+      logLoginAudit(req, {
+        email: emailNorm,
+        success: false,
+        reason: "user_not_found",
+        attempts: fail.attempts,
+        lockUntil: fail.lockUntil
+      });
+      return res.status(401).json({ error: "Credenciales invalidas" });
+    }
+
+    const ok = await bcrypt.compare(password, user.password_hash);
+    if (!ok) {
+      const fail = registerLoginFailure(attemptKey);
+      logLoginAudit(req, {
+        userId: user.id,
+        email: emailNorm,
+        success: false,
+        reason: "invalid_password",
+        attempts: fail.attempts,
+        lockUntil: fail.lockUntil
+      });
+      return res.status(401).json({ error: "Credenciales invalidas" });
+    }
+
+    if (AUTH_REQUIRE_EMAIL_VERIFICATION && !user.email_verified) {
+      logLoginAudit(req, {
+        userId: user.id,
+        email: emailNorm,
+        success: false,
+        reason: "email_not_verified"
+      });
       return res.status(403).json({ error: "Email no verificado", code: "EMAIL_NOT_VERIFIED" });
     }
+
     if (ADMIN_EMAILS.includes(emailNorm) && user.role !== "admin") {
       run("UPDATE users SET role = ? WHERE id = ?", ["admin", user.id]);
       user = { ...user, role: "admin" };
     }
-    const ok = await bcrypt.compare(password, user.password_hash);
-    if (!ok) return res.status(401).json({ error: "Credenciales inválidas" });
+
+    clearLoginFailures(attemptKey);
+    logLoginAudit(req, {
+      userId: user.id,
+      email: emailNorm,
+      success: true,
+      reason: "ok",
+      attempts: 0
+    });
 
     const token = signToken(user);
+    const refreshSession = createRefreshTokenSession(req, user.id);
+    res.cookie(REFRESH_TOKEN_COOKIE, refreshSession.token, getRefreshCookieOptions());
+    setCsrfCookie(res);
+    logSecurityEvent(req, {
+      userId: user.id,
+      eventType: "auth_login",
+      resourceType: "user",
+      resourceId: user.id,
+      success: true
+    });
     return res.json({ token, user: { id: user.id, email: user.email, role: user.role } });
   } catch (err) {
-    console.error("LOGIN ERR:", err.message);
-    return res.status(500).json({ error: "Error al iniciar sesión" });
+    console.error("LOGIN ERR:", req.requestId, err.message);
+    return res.status(500).json({ error: "Error al iniciar sesion" });
   }
 });
 
-
-app.post("/api/auth/resend-verification", async (req, res) => {
+app.post("/api/auth/refresh", authLimiter, async (req, res) => {
   try {
-    const { email } = req.body || {};
-    if (!isValidEmail(email)) {
-      return res.status(400).json({ error: "Email inválido" });
+    if (!requireCsrfToken(req, res)) {
+      logSecurityEvent(req, {
+        userId: null,
+        eventType: "auth_refresh",
+        resourceType: "session",
+        success: false,
+        details: { reason: "csrf_invalid" }
+      });
+      return;
+    }
+    const refreshToken = String(req.cookies?.[REFRESH_TOKEN_COOKIE] || "").trim();
+    if (!refreshToken) {
+      logSecurityEvent(req, {
+        userId: null,
+        eventType: "auth_refresh",
+        resourceType: "session",
+        success: false,
+        details: { reason: "refresh_cookie_missing" }
+      });
+      return res.status(401).json({ error: "Sesion expirada. Inicia sesion nuevamente." });
+    }
+
+    const tokenHash = hashRefreshToken(refreshToken);
+    const session = get(
+      `SELECT id, user_id, token_hash, expires_at, revoked_at
+       FROM refresh_tokens
+       WHERE token_hash = ?`,
+      [tokenHash]
+    );
+
+    if (!session || session.revoked_at) {
+      clearRefreshCookie(res);
+      clearCsrfCookie(res);
+      logSecurityEvent(req, {
+        userId: session?.user_id || null,
+        eventType: "auth_refresh",
+        resourceType: "session",
+        success: false,
+        details: { reason: "refresh_session_invalid" }
+      });
+      return res.status(401).json({ error: "Sesion expirada. Inicia sesion nuevamente." });
+    }
+
+    const expiresAtMs = Date.parse(session.expires_at);
+    if (Number.isNaN(expiresAtMs) || expiresAtMs <= Date.now()) {
+      revokeRefreshTokenByHash(tokenHash);
+      clearRefreshCookie(res);
+      clearCsrfCookie(res);
+      logSecurityEvent(req, {
+        userId: session.user_id,
+        eventType: "auth_refresh",
+        resourceType: "session",
+        success: false,
+        details: { reason: "refresh_expired" }
+      });
+      return res.status(401).json({ error: "Sesion expirada. Inicia sesion nuevamente." });
+    }
+
+    let user = get("SELECT id, email, role, email_verified FROM users WHERE id = ?", [session.user_id]);
+    if (!user) {
+      revokeRefreshTokenByHash(tokenHash);
+      clearRefreshCookie(res);
+      clearCsrfCookie(res);
+      logSecurityEvent(req, {
+        userId: session.user_id,
+        eventType: "auth_refresh",
+        resourceType: "session",
+        success: false,
+        details: { reason: "user_not_found" }
+      });
+      return res.status(401).json({ error: "Sesion invalida" });
+    }
+
+    if (AUTH_REQUIRE_EMAIL_VERIFICATION && !user.email_verified) {
+      clearRefreshCookie(res);
+      clearCsrfCookie(res);
+      logSecurityEvent(req, {
+        userId: user.id,
+        eventType: "auth_refresh",
+        resourceType: "session",
+        success: false,
+        details: { reason: "email_not_verified" }
+      });
+      return res.status(403).json({ error: "Email no verificado", code: "EMAIL_NOT_VERIFIED" });
+    }
+
+    if (ADMIN_EMAILS.includes(String(user.email || "").toLowerCase()) && user.role !== "admin") {
+      run("UPDATE users SET role = ? WHERE id = ?", ["admin", user.id]);
+      user = { ...user, role: "admin" };
+    }
+
+    const rotatedSession = createRefreshTokenSession(req, user.id);
+    revokeRefreshTokenByHash(tokenHash, rotatedSession.sessionId);
+    res.cookie(REFRESH_TOKEN_COOKIE, rotatedSession.token, getRefreshCookieOptions());
+    setCsrfCookie(res);
+
+    const token = signToken(user);
+    logSecurityEvent(req, {
+      userId: user.id,
+      eventType: "auth_refresh",
+      resourceType: "session",
+      success: true
+    });
+    return res.json({ token, user: { id: user.id, email: user.email, role: user.role } });
+  } catch (err) {
+    console.error("REFRESH ERR:", req.requestId, err.message);
+    clearRefreshCookie(res);
+    clearCsrfCookie(res);
+    return res.status(500).json({ error: "No se pudo renovar la sesion" });
+  }
+});
+
+app.post("/api/auth/logout", async (req, res) => {
+  try {
+    if (!requireCsrfToken(req, res)) {
+      logSecurityEvent(req, {
+        userId: req.user?.sub || null,
+        eventType: "auth_logout",
+        resourceType: "session",
+        success: false,
+        details: { reason: "csrf_invalid" }
+      });
+      return;
+    }
+    const refreshToken = String(req.cookies?.[REFRESH_TOKEN_COOKIE] || "").trim();
+    let userId = null;
+    if (refreshToken) {
+      const tokenHash = hashRefreshToken(refreshToken);
+      const session = get("SELECT user_id FROM refresh_tokens WHERE token_hash = ?", [tokenHash]);
+      userId = session?.user_id || null;
+      revokeRefreshTokenByHash(tokenHash);
+    }
+    clearRefreshCookie(res);
+    clearCsrfCookie(res);
+    logSecurityEvent(req, {
+      userId,
+      eventType: "auth_logout",
+      resourceType: "session",
+      success: true
+    });
+    return res.json({ message: "Sesion cerrada" });
+  } catch (err) {
+    console.error("LOGOUT ERR:", req.requestId, err.message);
+    clearRefreshCookie(res);
+    clearCsrfCookie(res);
+    return res.status(500).json({ error: "No se pudo cerrar sesion" });
+  }
+});
+
+app.post("/api/auth/resend-verification", authLimiter, async (req, res) => {
+  try {
+    const validated = validateBody(resendVerificationSchema, req.body);
+    if (!validated.ok) {
+      return res.status(400).json({ error: validated.error });
+    }
+    const { email } = validated.data;
+
+    if (!AUTH_REQUIRE_EMAIL_VERIFICATION) {
+      return res.status(200).json({ message: "La verificacion por email no es obligatoria actualmente." });
     }
     if (!CAN_SEND_EMAIL) {
       return res.status(400).json({ error: "Envio de email no configurado" });
     }
-    const emailNorm = email.trim().toLowerCase();
+
+    const emailNorm = cleanText(email, 180)?.toLowerCase();
+    if (!emailNorm) {
+      return res.status(400).json({ error: "Email invalido" });
+    }
+
     const user = get("SELECT * FROM users WHERE email = ?", [emailNorm]);
     if (!user) {
       return res.status(404).json({ error: "Usuario no encontrado" });
     }
     if (user.email_verified) {
-      return res.status(200).json({ message: "El email ya está verificado" });
+      return res.status(200).json({ message: "El email ya esta verificado" });
     }
+
     const token = randomUUID();
     run("UPDATE users SET verification_token = ?, verification_sent_at = CURRENT_TIMESTAMP WHERE id = ?", [
       token,
@@ -452,37 +1354,58 @@ app.post("/api/auth/resend-verification", async (req, res) => {
     await sendVerificationEmail({ to: emailNorm, token });
     return res.json({ message: "Te enviamos un nuevo email de verificacion" });
   } catch (err) {
-    console.error("RESEND VERIFY ERR:", err.message);
+    if (err?.code === "EMAIL_SEND_FAILED") {
+      return res.status(502).json({ error: `No se pudo reenviar la verificacion: ${err.message}` });
+    }
+    console.error("RESEND VERIFY ERR:", req.requestId, err.message);
     return res.status(500).json({ error: "No se pudo reenviar la verificacion" });
   }
 });
 
 app.get("/api/auth/verify", async (req, res) => {
   try {
+    if (!AUTH_REQUIRE_EMAIL_VERIFICATION) {
+      return res.status(200).json({ message: "La verificacion por email no es obligatoria actualmente." });
+    }
+
     const token = String(req.query.token || "").trim();
     if (!token) {
       return res.status(400).json({ error: "Token invalido" });
     }
+
     const user = get("SELECT * FROM users WHERE verification_token = ?", [token]);
     if (!user) {
       return res.status(400).json({ error: "Token invalido o vencido" });
     }
+
     if (user.verification_sent_at) {
       const sentAtMs = Date.parse(user.verification_sent_at);
       const maxAgeMs = 24 * 60 * 60 * 1000;
       if (!Number.isNaN(sentAtMs) && Date.now() - sentAtMs > maxAgeMs) {
-        return res.status(400).json({ error: "Token vencido. ReenviÃ¡ la verificaciÃ³n." });
+        return res.status(400).json({ error: "Token vencido. Reenvia la verificacion." });
       }
     }
+
     run("UPDATE users SET email_verified = 1, verification_token = NULL WHERE id = ?", [user.id]);
     const authToken = signToken(user);
+    const refreshSession = createRefreshTokenSession(req, user.id);
+    res.cookie(REFRESH_TOKEN_COOKIE, refreshSession.token, getRefreshCookieOptions());
+    setCsrfCookie(res);
+    logSecurityEvent(req, {
+      userId: user.id,
+      eventType: "auth_verify_email",
+      resourceType: "user",
+      resourceId: user.id,
+      success: true
+    });
+
     return res.json({
       message: "Email verificado correctamente",
       token: authToken,
       user: { id: user.id, email: user.email, role: user.role }
     });
   } catch (err) {
-    console.error("VERIFY ERR:", err.message);
+    console.error("VERIFY ERR:", req.requestId, err.message);
     return res.status(500).json({ error: "No se pudo verificar el email" });
   }
 });
@@ -495,17 +1418,28 @@ app.get("/api/me", authRequired, async (req, res) => {
     return res.status(500).json({ error: "Error al obtener usuario" });
   }
 });
-
 // -------------------- CASOS --------------------
 app.get("/api/cases", authRequired, async (req, res) => {
   try {
     if (req.user.role === "admin") {
       const rows = all(`
-        SELECT c.*, u.email AS user_email
+        SELECT c.*, u.email AS user_email, eu.email AS enterprise_email
         FROM cases c
         JOIN users u ON u.id = c.user_id
+        LEFT JOIN users eu ON eu.id = c.enterprise_user_id
         ORDER BY c.created_at DESC
       `);
+      return res.json(rows);
+    }
+    if (req.user.role === "enterprise") {
+      const rows = all(
+        `SELECT c.*, u.email AS user_email
+         FROM cases c
+         JOIN users u ON u.id = c.user_id
+         WHERE c.enterprise_user_id = ?
+         ORDER BY c.created_at DESC`,
+        [req.user.sub]
+      );
       return res.json(rows);
     }
     const rows = all("SELECT * FROM cases WHERE user_id = ? ORDER BY created_at DESC", [req.user.sub]);
@@ -517,8 +1451,14 @@ app.get("/api/cases", authRequired, async (req, res) => {
 
 app.post("/api/cases", authRequired, maybeUpload, async (req, res) => {
   try {
-    const body = req.body || {};
+    const validated = validateBody(caseCreateSchema, req.body);
+    if (!validated.ok) {
+      return res.status(400).json({ error: validated.error });
+    }
+
+    const body = validated.data;
     const {
+      categoria,
       nombre_completo,
       dni_cuit,
       email_contacto,
@@ -531,15 +1471,13 @@ app.post("/api/cases", authRequired, maybeUpload, async (req, res) => {
       medios_pago,
       relato,
       autorizacion,
-      plan_elegido
+      plan_elegido,
+      detalle
     } = body;
 
-    const detalle = relato || body.detalle;
-    if (!isNonEmptyString(detalle)) {
-      return res.status(400).json({ error: "La descripción del caso es obligatoria" });
-    }
-    if (email_contacto && !isValidEmail(email_contacto)) {
-      return res.status(400).json({ error: "Email de contacto inválido" });
+    const detalleValue = cleanText(relato || detalle, 4000);
+    if (!detalleValue) {
+      return res.status(400).json({ error: "La descripcion del caso es obligatoria" });
     }
 
     const files = (req.files || []).map((file) => ({
@@ -548,6 +1486,18 @@ app.post("/api/cases", authRequired, maybeUpload, async (req, res) => {
       size: file.size,
       mimetype: file.mimetype
     }));
+
+    const nombreCompletoClean = cleanText(nombre_completo, 120);
+    const dniCuitClean = cleanText(dni_cuit, 40);
+    const emailContactoClean = cleanText(email_contacto === "" ? null : email_contacto, 180)?.toLowerCase();
+    const telefonoClean = cleanText(telefono, 60);
+    const entidadClean = cleanText(entidad, 160);
+    const tipoEntidadClean = cleanText(tipo_entidad, 160);
+    const montoValorClean = cleanText(monto_valor, 40);
+    const montoEscalaClean = cleanText(monto_escala, 40);
+    const montoMonedaClean = cleanText(monto_moneda, 20);
+    const relatoClean = cleanText(relato, 4000);
+    const planElegidoClean = cleanText(plan_elegido, 120);
 
     const caseId = randomUUID();
     const estadoInicial = "Recibido";
@@ -560,33 +1510,47 @@ app.post("/api/cases", authRequired, maybeUpload, async (req, res) => {
       [
         caseId,
         req.user.sub,
-        body.categoria || null,
-        detalle.trim(),
+        cleanText(categoria, 120),
+        detalleValue,
         estadoInicial,
-        nombre_completo || null,
-        dni_cuit || null,
-        email_contacto || null,
-        telefono || null,
-        entidad || null,
-        tipo_entidad || null,
-        monto_valor || null,
-        monto_escala || null,
-        monto_moneda || null,
+        nombreCompletoClean,
+        dniCuitClean,
+        emailContactoClean,
+        telefonoClean,
+        entidadClean,
+        tipoEntidadClean,
+        montoValorClean,
+        montoEscalaClean,
+        montoMonedaClean,
         typeof medios_pago === "string" ? medios_pago : JSON.stringify(medios_pago || []),
-        relato || null,
+        relatoClean,
         autorizacion === "true" || autorizacion === true ? 1 : 0,
         files.length ? JSON.stringify(files) : null,
-        plan_elegido || null
+        planElegidoClean
       ]
     );
+
     const initialUpdateId = randomUUID();
-    run("INSERT INTO case_updates (id, case_id, author_id, mensaje, estado) VALUES (?, ?, ?, ?, ?)", [
+    run("INSERT INTO case_updates (id, case_id, author_id, mensaje, estado, prioridad) VALUES (?, ?, ?, ?, ?, ?)", [
       initialUpdateId,
       caseId,
       req.user.sub,
       "Caso cargado por el usuario.",
-      estadoInicial
+      estadoInicial,
+      null
     ]);
+    logSecurityEvent(req, {
+      userId: req.user.sub,
+      eventType: "case_create",
+      resourceType: "case",
+      resourceId: caseId,
+      success: true,
+      details: {
+        estado: estadoInicial,
+        categoria: cleanText(categoria, 120)
+      }
+    });
+
     const created = get("SELECT * FROM cases WHERE id = ?", [caseId]);
     return res.status(201).json(created);
   } catch (err) {
@@ -595,13 +1559,12 @@ app.post("/api/cases", authRequired, maybeUpload, async (req, res) => {
     return res.status(500).json({ error: "Error al crear el caso" });
   }
 });
-
 app.get("/api/cases/:id", authRequired, async (req, res) => {
   try {
     const caso = get("SELECT * FROM cases WHERE id = ?", [req.params.id]);
     if (!caso) return res.status(404).json({ error: "Caso no encontrado" });
 
-    if (req.user.role !== "admin" && caso.user_id !== req.user.sub) {
+    if (!canAccessCase(req.user, caso)) {
       return res.status(403).json({ error: "Acceso restringido" });
     }
     return res.json(caso);
@@ -614,7 +1577,7 @@ app.get("/api/cases/:id/updates", authRequired, async (req, res) => {
   try {
     const caso = get("SELECT * FROM cases WHERE id = ?", [req.params.id]);
     if (!caso) return res.status(404).json({ error: "Caso no encontrado" });
-    if (req.user.role !== "admin" && caso.user_id !== req.user.sub) {
+    if (!canAccessCase(req.user, caso)) {
       return res.status(403).json({ error: "Acceso restringido" });
     }
 
@@ -638,7 +1601,7 @@ app.get("/api/cases/:id/files/:filename", authRequired, async (req, res) => {
   try {
     const caso = get("SELECT * FROM cases WHERE id = ?", [req.params.id]);
     if (!caso) return res.status(404).json({ error: "Caso no encontrado" });
-    if (req.user.role !== "admin" && caso.user_id !== req.user.sub) {
+    if (!canAccessCase(req.user, caso)) {
       return res.status(403).json({ error: "Acceso restringido" });
     }
 
@@ -672,44 +1635,267 @@ app.get("/api/cases/:id/files/:filename", authRequired, async (req, res) => {
   }
 });
 
-app.post("/api/cases/:id/updates", authRequired, adminOnly, async (req, res) => {
+app.post("/api/cases/:id/updates", authRequired, async (req, res) => {
   try {
-    const { mensaje, estado } = req.body || {};
-    if (!isNonEmptyString(mensaje)) {
-      return res.status(400).json({ error: "El mensaje es obligatorio" });
+    const validated = validateBody(caseUpdateSchema, req.body);
+    if (!validated.ok) {
+      return res.status(400).json({ error: validated.error });
     }
+    const { mensaje, estado, prioridad } = validated.data;
+
     const caso = get("SELECT * FROM cases WHERE id = ?", [req.params.id]);
     if (!caso) return res.status(404).json({ error: "Caso no encontrado" });
+    if (!canAccessCase(req.user, caso)) {
+      return res.status(403).json({ error: "Acceso restringido" });
+    }
+
+    const isAdmin = req.user.role === "admin";
+    const isEnterprise = req.user.role === "enterprise";
+    if (!isAdmin && !isEnterprise) {
+      return res.status(403).json({ error: "Acceso restringido" });
+    }
+
+    const allowedStatusEnterprise = new Set([
+      "recibido",
+      "en analisis",
+      "pendiente interno",
+      "cerrado"
+    ]);
+    const allowedStatusAdmin = new Set([
+      "recibido",
+      "en analisis",
+      "documentacion solicitada",
+      "viable (pendiente de pago)",
+      "no viable",
+      "presentado ante entidad",
+      "en espera de respuesta",
+      "respuesta recibida",
+      "cerrado"
+    ]);
+    const allowedPriority = new Set(["alta", "media", "baja"]);
+
+    const normalizedStatus = normalizeCompareText(estado);
+    const normalizedPriority = normalizeCompareText(prioridad);
+
+    if (isAdmin && estado && !allowedStatusAdmin.has(normalizedStatus)) {
+      return res.status(400).json({ error: "Estado invalido" });
+    }
+    if (isEnterprise && estado && !allowedStatusEnterprise.has(normalizedStatus)) {
+      return res.status(400).json({ error: "Estado invalido para usuario empresa" });
+    }
+    if (prioridad && !allowedPriority.has(normalizedPriority)) {
+      return res.status(400).json({ error: "Prioridad invalida" });
+    }
+
+    const messageText = isNonEmptyString(mensaje)
+      ? cleanText(mensaje, 3000)
+      : isEnterprise
+        ? "Actualizacion interna de empresa."
+        : "";
+    if (!isEnterprise && !messageText) {
+      return res.status(400).json({ error: "El mensaje es obligatorio" });
+    }
 
     const updateId = randomUUID();
-    run("INSERT INTO case_updates (id, case_id, author_id, mensaje, estado) VALUES (?, ?, ?, ?, ?)", [
+    run("INSERT INTO case_updates (id, case_id, author_id, mensaje, estado, prioridad) VALUES (?, ?, ?, ?, ?, ?)", [
       updateId,
       req.params.id,
       req.user.sub,
-      mensaje.trim(),
-      estado || null
+      messageText,
+      estado || null,
+      prioridad || null
     ]);
 
     const newEstado = estado || caso.estado;
-    run("UPDATE cases SET estado = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [
-      newEstado,
-      req.params.id
-    ]);
+    const newPrioridad = prioridad || caso.prioridad || null;
+    run(
+      "UPDATE cases SET estado = ?, prioridad = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+      [newEstado, newPrioridad, req.params.id]
+    );
+    logSecurityEvent(req, {
+      userId: req.user.sub,
+      eventType: "case_update",
+      resourceType: "case",
+      resourceId: req.params.id,
+      success: true,
+      details: {
+        fromEstado: caso.estado || null,
+        toEstado: newEstado || null,
+        fromPrioridad: caso.prioridad || null,
+        toPrioridad: newPrioridad || null,
+        actorRole: req.user.role
+      }
+    });
+
     const createdUpdate = get("SELECT * FROM case_updates WHERE id = ?", [updateId]);
-    if (estado && estado !== caso.estado) {
+    if (isAdmin && estado && estado !== caso.estado) {
       const owner = get("SELECT email FROM users WHERE id = ?", [caso.user_id]);
       const to = (caso.email_contacto || owner?.email || "").trim();
-      await sendStatusEmail({ to, status: newEstado, message: mensaje, caseId: caso.id });
+      await sendStatusEmail({ to, status: newEstado, message: messageText, caseId: caso.id });
     }
     return res.status(201).json(createdUpdate);
   } catch (err) {
-    return res.status(500).json({ error: "Error al crear actualización" });
+    return res.status(500).json({ error: "Error al crear actualizacion" });
+  }
+});
+app.post("/api/cases/import", authRequired, adminOnly, upload.single("file"), async (req, res) => {
+  let importedCount = 0;
+  let rejectedCount = 0;
+  let importedFailed = false;
+  try {
+    const enterpriseUserId = String(req.body?.enterprise_user_id || "").trim();
+    if (!enterpriseUserId) {
+      return res.status(400).json({ error: "Debes seleccionar un usuario empresa" });
+    }
+    const enterpriseUser = get("SELECT id, email, role FROM users WHERE id = ?", [enterpriseUserId]);
+    if (!enterpriseUser || enterpriseUser.role !== "enterprise") {
+      return res.status(400).json({ error: "Usuario empresa invalido" });
+    }
+    if (!req.file?.path) {
+      return res.status(400).json({ error: "Debes adjuntar un archivo CSV" });
+    }
+
+    const csvText = fs.readFileSync(req.file.path, "utf8");
+    const rows = parseCsvText(csvText);
+    if (!rows.length) {
+      return res.status(400).json({ error: "Archivo vacio o sin filas validas" });
+    }
+
+    const allowedStatus = ["Recibido", "En analisis", "Pendiente interno", "Cerrado"];
+    const allowedPriority = ["Alta", "Media", "Baja"];
+    const importedRows = [];
+    const rejectedRows = [];
+
+    rows.forEach((row, idx) => {
+      const line = idx + 2;
+      const caseCode = String(row.case_code || "").trim();
+      const empresa = String(row.empresa || "").trim();
+      const fechaCaso = String(row.fecha_caso || "").trim();
+      const clienteNombre = String(row.cliente_nombre || "").trim();
+      const clienteDocumento = String(row.cliente_documento || "").trim();
+      const entidad = String(row.entidad || "").trim();
+      const tipoReclamo = String(row.tipo_reclamo || "").trim();
+      const descripcion = String(row.descripcion || "").trim();
+      const monto = String(row.monto || "").trim();
+      const moneda = String(row.moneda || "").trim().toUpperCase();
+      const canalOrigen = String(row.canal_origen || "").trim();
+      const estado = String(row.estado || "").trim();
+      const prioridad = String(row.prioridad || "").trim();
+      const observaciones = String(row.observaciones_internas || "").trim();
+
+      if (!caseCode || !fechaCaso || !clienteNombre || !entidad || !tipoReclamo || !descripcion || !estado || !prioridad) {
+        rejectedRows.push({ line, reason: "Faltan campos obligatorios" });
+        return;
+      }
+      if (!allowedStatus.includes(estado)) {
+        rejectedRows.push({ line, reason: "Estado invalido" });
+        return;
+      }
+      if (!allowedPriority.includes(prioridad)) {
+        rejectedRows.push({ line, reason: "Prioridad invalida" });
+        return;
+      }
+      const duplicate = get("SELECT id FROM cases WHERE case_code = ? AND enterprise_user_id = ?", [
+        caseCode,
+        enterpriseUserId
+      ]);
+      if (duplicate) {
+        rejectedRows.push({ line, reason: "Codigo de caso duplicado para esa empresa" });
+        return;
+      }
+
+      const caseId = randomUUID();
+      run(
+        `INSERT INTO cases (
+          id, user_id, categoria, detalle, estado, nombre_completo, dni_cuit, entidad,
+          monto_valor, monto_moneda, relato, autorizacion, case_code, empresa, prioridad,
+          fecha_caso, canal_origen, enterprise_user_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          caseId,
+          req.user.sub,
+          tipoReclamo,
+          descripcion,
+          estado,
+          clienteNombre,
+          clienteDocumento || null,
+          entidad,
+          monto || null,
+          moneda || null,
+          descripcion,
+          0,
+          caseCode,
+          empresa || enterpriseUser.email,
+          prioridad,
+          fechaCaso,
+          canalOrigen || null,
+          enterpriseUserId
+        ]
+      );
+
+      run("INSERT INTO case_updates (id, case_id, author_id, mensaje, estado, prioridad) VALUES (?, ?, ?, ?, ?, ?)", [
+        randomUUID(),
+        caseId,
+        req.user.sub,
+        observaciones || "Caso importado masivamente por RFA.",
+        estado,
+        prioridad
+      ]);
+      importedRows.push({ line, case_code: caseCode });
+    });
+
+    importedCount = importedRows.length;
+    rejectedCount = rejectedRows.length;
+
+    return res.status(201).json({
+      total: rows.length,
+      imported: importedRows.length,
+      rejected: rejectedRows.length,
+      rejectedRows
+    });
+  } catch (err) {
+    importedFailed = true;
+    console.error("IMPORT CASES ERR:", err.message);
+    return res.status(500).json({ error: "Error al importar casos masivos" });
+  } finally {
+    try {
+      logSecurityEvent(req, {
+        userId: req.user?.sub || null,
+        eventType: "case_import",
+        resourceType: "enterprise",
+        resourceId: String(req.body?.enterprise_user_id || ""),
+        success: !importedFailed && (importedCount > 0 || rejectedCount > 0),
+        details: {
+          imported: importedCount,
+          rejected: rejectedCount
+        }
+      });
+    } catch (_e) {
+      // noop
+    }
+    if (req.file?.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
   }
 });
 
 // Alias antiguos por compatibilidad
 app.get("/api/casos", (req, res) => res.redirect(307, "/api/cases"));
 app.post("/api/casos", (req, res) => res.redirect(307, "/api/cases"));
+
+app.use((err, _req, res, next) => {
+  if (!err) return next();
+  if (err instanceof multer.MulterError) {
+    if (err.code === "LIMIT_FILE_SIZE") {
+      return res.status(413).json({ error: "Adjunto demasiado grande (maximo 25MB por archivo)" });
+    }
+    return res.status(400).json({ error: "Error de carga de archivos" });
+  }
+  if (String(err.message || "").includes("CORS")) {
+    return res.status(403).json({ error: "Origen no permitido" });
+  }
+  return res.status(500).json({ error: "Error interno del servidor" });
+});
 
 initSqlJs({ locateFile: (file) => path.join(__dirname, "node_modules", "sql.js", "dist", file) })
   .then((SQL) => {
@@ -731,3 +1917,8 @@ initSqlJs({ locateFile: (file) => path.join(__dirname, "node_modules", "sql.js",
     console.error("DB INIT ERR:", err.message);
     process.exit(1);
   });
+
+
+
+
+

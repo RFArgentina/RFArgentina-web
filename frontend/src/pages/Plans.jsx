@@ -16,7 +16,7 @@ export default function Plans() {
           </p>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-6 mb-10">
+        <div className="grid md:grid-cols-2 gap-6 mb-10">
           {plans.map((plan) => (
             <div
               key={plan.name}
@@ -28,7 +28,7 @@ export default function Plans() {
                 {plan.period}
               </p>
               <h3 className="text-xl font-bold text-slate-900 mb-2">{plan.name}</h3>
-              <p className="text-slate-900 font-semibold">{plan.priceUsd}</p>
+              {plan.priceUsd && <p className="text-slate-900 font-semibold">{plan.priceUsd}</p>}
               <p className="text-3xl font-extrabold text-slate-950 mb-4">{plan.price}</p>
               <ul className="space-y-2 text-sm text-slate-700">
                 {plan.features.map((item) => (
@@ -55,3 +55,4 @@ export default function Plans() {
     </div>
   );
 }
+

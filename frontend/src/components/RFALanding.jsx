@@ -63,18 +63,14 @@ const services = [
     ],
   },
  {
-  title: 'Planes de acompañamiento',
+  title: 'Gestion integral del reclamo',
   description:
-    'Tomamos tu caso y nos encargamos de iniciar o continuar el reclamo ante la entidad correspondiente, manteniéndote informado en cada etapa del proceso.',
+    'Si tu caso es viable, podemos tomar la gestion administrativa completa del reclamo ante la entidad correspondiente, con seguimiento y comunicacion en cada etapa.',
   features: [
-
-    'Gestión administrativa completa del reclamo',
-
-    'Presentación formal ante la entidad',
-
-    'Seguimiento constante del estado del caso',
-
-    'Comunicación directa durante todo el proceso',
+    'Presentacion formal ante banco, fintech u otra entidad',
+    'Pedido de revision y reajuste en casos de deuda o cargos discutidos',
+    'Seguimiento de respuestas y plazos para evitar demoras',
+    'Comunicacion clara para que siempre sepas en que estado esta tu caso',
   ],
 },
 
@@ -159,7 +155,7 @@ const services = [
           </div>
         </section>
  
-      {/* ================= QUIÉNES SOMOS ================= */}
+      {/* ================= QUI?NES SOMOS ================= */}
 <section className="py-20 px-6 bg-white/5 backdrop-blur-sm">
   <div className="container mx-auto grid md:grid-cols-2 gap-12 items-center">
     
@@ -181,8 +177,8 @@ const services = [
           <ul
             className="space-y-3 pr-3"
             style={{
-              maxHeight: "230px", // 🔹 Scroll largo visible
-              overflowY: "scroll", // ✅ Solo este scrollea
+              maxHeight: "230px", // Scroll largo visible
+              overflowY: "scroll", // Solo este scrollea
               scrollbarWidth: "thin",
               scrollbarColor: "#10b981 transparent",
             }}
@@ -245,7 +241,7 @@ const services = [
   </div>
 </section>
 
-        {/* ================= CÓMO TRABAJAMOS ================= */}
+        {/* ================= C?MO TRABAJAMOS ================= */}
         <section className="py-20 px-6">
           <div className="max-w-6xl mx-auto">
             <div className="text-center mb-14">
@@ -291,6 +287,66 @@ const services = [
                 </CardContent>
               </Card>
             ))}
+          </div>
+        </section>
+
+        {/* ================= GESTION DE RECLAMOS ================= */}
+        <section className="py-20 px-6">
+          <div className="max-w-6xl mx-auto">
+            <div className="text-center mb-12">
+              <p className="text-emerald-300 uppercase tracking-[0.22em] text-sm md:text-base font-extrabold mb-4">
+                Gestion de Reclamos ante Entidades
+              </p>
+              <h2 className="text-3xl md:text-4xl font-bold text-slate-100 mb-4">
+                Defendemos tus derechos como usuario financiero
+              </h2>
+              <p className="text-slate-300 max-w-4xl mx-auto">
+                En RFA te acompanamos de forma profesional en la gestion completa de reclamos administrativos contra bancos,
+                billeteras virtuales, tarjetas de credito y otras entidades del sistema financiero que hayan actuado con abuso,
+                desinformacion o incumplimiento.
+              </p>
+              <p className="text-slate-300 max-w-4xl mx-auto mt-4">
+                Nos ocupamos de redactar, presentar y hacer el seguimiento del reclamo formal ante la entidad correspondiente,
+                exigiendo una respuesta fundada y justa en base al caso concreto, hasta agotar vias administrativas.
+              </p>
+            </div>
+
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-6 mb-6">
+              <h3 className="text-xl font-semibold text-emerald-300 mb-4">Cuando aplica este servicio</h3>
+              <p className="text-slate-300 mb-4">Casos en los que la entidad:</p>
+              <ul className="space-y-2 text-slate-200">
+                <li className="flex items-start gap-2"><CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />Cobro comisiones, debitos o intereses abusivos.</li>
+                <li className="flex items-start gap-2"><CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />Suspendio cuentas o retuvo fondos sin explicacion.</li>
+                <li className="flex items-start gap-2"><CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />Rechazo refinanciaciones razonables.</li>
+                <li className="flex items-start gap-2"><CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />No entrego informacion clara ni contratos escritos.</li>
+                <li className="flex items-start gap-2"><CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />Omitio respuesta a reclamos anteriores.</li>
+                <li className="flex items-start gap-2"><CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />Desconocio pagos, transferencias o reintegros.</li>
+                <li className="flex items-start gap-2"><CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />Vulnero tu derecho a trato digno o atencion personalizada.</li>
+              </ul>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-6">
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
+                <h3 className="text-xl font-semibold text-emerald-300 mb-4">Que hacemos por vos</h3>
+                <ul className="space-y-3 text-slate-200">
+                  <li className="flex items-start gap-2"><Shield className="w-5 h-5 text-emerald-400 mt-0.5" />Relevamos tu situacion: analizamos tu caso, documentacion y antecedentes.</li>
+                  <li className="flex items-start gap-2"><Shield className="w-5 h-5 text-emerald-400 mt-0.5" />Armamos tu reclamo profesional: con hechos, pruebas y fundamentos juridicos claros.</li>
+                  <li className="flex items-start gap-2"><Shield className="w-5 h-5 text-emerald-400 mt-0.5" />Presentamos a la entidad: por canales formales (email, formulario web, defensa del consumidor, etc.).</li>
+                  <li className="flex items-start gap-2"><Shield className="w-5 h-5 text-emerald-400 mt-0.5" />Hacemos seguimiento real: controlamos plazos, respuestas y exigimos resoluciones fundadas.</li>
+                  <li className="flex items-start gap-2"><Shield className="w-5 h-5 text-emerald-400 mt-0.5" />Te mantenemos informado: sin vueltas, con claridad y tiempos razonables.</li>
+                  <li className="flex items-start gap-2"><Shield className="w-5 h-5 text-emerald-400 mt-0.5" />Dejamos a disposicion, cuando lo solicites, las comunicaciones entre RFA y la entidad como prueba para escalar el caso o para tu control.</li>
+                  <li className="flex items-start gap-2"><Shield className="w-5 h-5 text-emerald-400 mt-0.5" />El servicio se sostiene con gestion activa y seguimiento hasta agotar vias administrativas.</li>
+                </ul>
+              </div>
+
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
+                <h3 className="text-xl font-semibold text-emerald-300 mb-4">Que no hacemos</h3>
+                <ul className="space-y-3 text-slate-200">
+                  <li className="flex items-start gap-2"><Gavel className="w-5 h-5 text-emerald-400 mt-0.5" />No ejercemos representacion legal ni patrocinio judicial.</li>
+                  <li className="flex items-start gap-2"><Gavel className="w-5 h-5 text-emerald-400 mt-0.5" />No intervenimos en mediaciones oficiales o juicios (aunque te preparamos la carpeta para que puedas hacerlo con tu abogado).</li>
+                </ul>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -379,7 +435,7 @@ const services = [
     ¿Puedo abonar mi plan en cuotas
   </h3>
   <p className="text-slate-300 leading-relaxed">
-    Sí. A partir del <strong>Plan Seguimiento</strong>, los pagos pueden realizarse en 
+    Sí. A partir de <strong>Plan Gestion Basica</strong>, los pagos pueden realizarse en 
     <strong> dos cuotas sin interés</strong>, abonadas dentro del período de soporte 
     establecido para cada plan.
   </p>
@@ -471,3 +527,4 @@ const services = [
 };
 
 export default RFALanding;
+

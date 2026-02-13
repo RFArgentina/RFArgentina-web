@@ -28,6 +28,7 @@ export default function Enterprise() {
     setSending(true);
     setError("");
     setSent(false);
+
     fetch("/api/enterprise", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -72,50 +73,44 @@ export default function Enterprise() {
         <section className="grid lg:grid-cols-[1.2fr_0.8fr] gap-10 items-start">
           <div>
             <p className="text-emerald-300 uppercase tracking-[0.3em] text-xs font-semibold mb-4">
-              Soluciones para empresas
+              Soluciones para Empresas
             </p>
             <h1 className="text-4xl md:text-5xl font-extrabold leading-tight mb-6">
               Transformamos reclamos en eficiencia operativa
             </h1>
             <p className="text-lg text-slate-300 leading-relaxed">
-              En RFA ayudamos a empresas que reciben cientos de reclamos diarios a procesarlos, organizarlos y
-              dejarlos listos para su gestión interna. Convertimos cada reclamo en un caso estructurado y
-              gestionable para simplificar el trabajo del equipo de la empresa.
+              En RFA ayudamos a empresas que reciben altos volumenes de reclamos a convertirlos en casos ordenados,
+              claros y listos para su gestion interna.
             </p>
             <p className="text-sm text-slate-400 mt-4">
-              Importante: no nos hacemos cargo de la gestión del reclamo. Nuestro servicio es 100% de
-              organización, evidencia y armado de carpeta profesional.
+              Nos enfocamos exclusivamente en la organizacion profesional, no en la resolucion directa.
+            </p>
+            <p className="text-sm text-slate-300 mt-3 leading-relaxed">
+              Cada empresa cuenta con un usuario exclusivo dentro del panel interno de RFA, pensado para
+              visualizar, ordenar y dar seguimiento a sus casos con una trazabilidad clara y continua.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
-              {["Estructuración de reclamos", "Clasificación inteligente", "Automatización", "Reportes ejecutivos"].map((item) => (
+              {[
+                "Estructuracion de reclamos",
+                "Clasificacion y priorizacion",
+                "Automatizacion",
+                "Reportes ejecutivos"
+              ].map((item) => (
                 <span key={item} className="px-4 py-2 rounded-full text-xs font-semibold rfa-chip">
                   {item}
                 </span>
               ))}
             </div>
-            <div className="mt-8 flex flex-wrap gap-4">
-              <Button
-                className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold py-3 px-6 rounded-lg shadow-md transition"
-                onClick={() => window.open("mailto:soporte@rfargentina.com", "_blank")}
-              >
-                Contactar equipo comercial
-              </Button>
-              <Button
-                className="bg-white/10 hover:bg-white/20 text-white font-semibold py-3 px-6 rounded-lg border border-white/20"
-                onClick={() => window.open("https://wa.me/542212024379", "_blank")}
-              >
-                WhatsApp ejecutivo
-              </Button>
-            </div>
           </div>
+
           <div className="rfa-sheen rounded-2xl p-8">
-            <h2 className="text-lg font-semibold mb-4">Cómo impactamos en tu operación</h2>
+            <h2 className="text-lg font-semibold mb-4">Como impactamos en tu operacion</h2>
             <ul className="space-y-3 text-sm text-slate-200">
               {[
-                "Procesos claros para equipos colapsados",
+                "Casos claros y trazables para gestion interna",
                 "Menos tiempo en tareas repetitivas",
-                "Casos listos para presentar o derivar",
-                "Menos riesgo legal y reputacional"
+                "Equipos mas ordenados y con mejor productividad",
+                "Menor riesgo legal y reputacional"
               ].map((item) => (
                 <li key={item} className="flex items-start gap-3">
                   <span className="mt-1 h-2 w-2 rounded-full bg-emerald-400" />
@@ -126,92 +121,51 @@ export default function Enterprise() {
           </div>
         </section>
 
-        <section className="grid md:grid-cols-3 gap-6">
-          {[
-            {
-              title: "Estructuración de reclamos",
-              text: "Convertimos mensajes desordenados en casos claros con hechos ordenados, documentación y requerimientos."
-            },
-            {
-              title: "Clasificación y priorización",
-              text: "Filtramos urgentes, legales y repetitivos. Identificamos áreas responsables y tipos de falla."
-            },
-            {
-              title: "Automatización y reportes",
-              text: "Creamos plantillas, flujos y reportes mensuales con motivos frecuentes y riesgos críticos."
-            }
-          ].map((item) => (
-            <div key={item.title} className="bg-white/10 border border-white/10 rounded-2xl p-6">
-              <h3 className="text-xl font-semibold mb-2">{item.title}</h3>
-              <p className="text-sm text-slate-300 leading-relaxed">{item.text}</p>
-            </div>
-          ))}
-        </section>
-
         <section className="bg-white/10 border border-white/10 rounded-2xl p-8 space-y-8">
           <div>
-            <h2 className="text-2xl font-semibold mb-4">Qué hacemos</h2>
+            <h2 className="text-2xl font-semibold mb-4">Que hacemos</h2>
             <div className="grid md:grid-cols-2 gap-6 text-sm text-slate-300">
               {[
                 {
-                  title: "1. Estructuración de reclamos",
-                  items: [
-                    "Descripción precisa del reclamo",
-                    "Hechos ordenados",
-                    "Documentación asociada",
-                    "Requerimiento puntual del cliente"
-                  ]
+                  title: "1. Estructuracion de Reclamos",
+                  text:
+                    "Tomamos cada reclamo y lo transformamos en un caso claro, con hechos ordenados, pruebas asociadas y objetivo definido para el equipo interno."
                 },
                 {
-                  title: "2. Clasificación y priorización",
-                  items: [
-                    "Urgentes / legales / repetitivos",
-                    "Áreas responsables",
-                    "Tipos de falla"
-                  ]
+                  title: "2. Clasificacion y Priorizacion",
+                  text:
+                    "Identificamos urgencias, riesgos y patrones repetitivos para que cada area reciba lo que corresponde y pueda actuar mas rapido."
                 },
                 {
-                  title: "3. Automatización de procesos",
-                  items: [
-                    "Respuestas base y plantillas",
-                    "Flujos automáticos",
-                    "Escalabilidad real"
-                  ]
+                  title: "3. Automatizacion y Respuestas Base",
+                  text:
+                    "Disenamos plantillas y flujos operativos simples para reducir tareas manuales, mejorar tiempos y sostener volumen sin perder calidad."
                 },
                 {
-                  title: "4. Reportes y análisis",
-                  items: [
-                    "Volumen de reclamos",
-                    "Motivos más frecuentes",
-                    "Áreas críticas",
-                    "Riesgos legales o reputacionales"
-                  ]
+                  title: "4. Reportes Ejecutivos",
+                  text:
+                    "Entregamos reportes concretos con volumen, tipologia y focos de riesgo para que puedas decidir con datos y mejorar el proceso."
                 }
               ].map((block) => (
                 <div key={block.title} className="bg-white/5 border border-white/10 rounded-xl p-5">
                   <p className="text-emerald-300 font-semibold mb-3">{block.title}</p>
-                  <ul className="space-y-2">
-                    {block.items.map((item) => (
-                      <li key={item}>• {item}</li>
-                    ))}
-                  </ul>
+                  <p className="leading-relaxed">{block.text}</p>
                 </div>
               ))}
             </div>
           </div>
-
         </section>
 
         <section className="bg-white/10 border border-white/10 rounded-2xl p-8 space-y-8">
           <div>
-            <h2 className="text-2xl font-semibold mb-4">Qué problemas resolvemos</h2>
+            <h2 className="text-2xl font-semibold mb-4">Que problemas resolvemos</h2>
             <div className="grid md:grid-cols-2 gap-4 text-sm text-slate-300">
               {[
-                "Colapso de atención al cliente",
-                "Mala gestión de reclamos regulatorios",
-                "Riesgo legal por falta de respuesta",
-                "Imagen deteriorada en redes y portales",
-                "Tiempo excesivo dedicado a tareas repetitivas"
+                "Colapso de atencion al cliente",
+                "Dificultades para cumplir tiempos regulatorios",
+                "Exposicion a sanciones legales por falta de respuesta",
+                "Imagen deteriorada en portales o redes",
+                "Tiempo excesivo en tareas operativas"
               ].map((item) => (
                 <div key={item} className="bg-white/5 border border-white/10 rounded-xl p-4">
                   {item}
@@ -221,7 +175,38 @@ export default function Enterprise() {
           </div>
 
           <div>
-            <h2 className="text-2xl font-semibold mb-4">Cómo se paga</h2>
+            <h2 className="text-2xl font-semibold mb-4">Como trabajamos</h2>
+            <div className="grid md:grid-cols-2 gap-4 text-sm text-slate-300 mb-6">
+              {[
+                {
+                  title: "1. Recepcion de casos",
+                  text:
+                    "Recibimos los casos que la empresa envia en lote y validamos formato, datos clave y prioridad operativa para evitar reprocesos."
+                },
+                {
+                  title: "2. Carga y orden en plataforma",
+                  text:
+                    "Cargamos cada caso en el panel interno de RFA con estado y prioridad definidos, para que el equipo lo vea claro desde el primer dia."
+                },
+                {
+                  title: "3. Alta de usuario empresa",
+                  text:
+                    "Habilitamos un usuario exclusivo para la empresa, con acceso a su tablero de casos y trazabilidad completa de cada gestion interna."
+                },
+                {
+                  title: "4. Seguimiento y claridad operativa",
+                  text:
+                    "La empresa puede consultar y actualizar estado/prioridad para su organizacion diaria, mientras RFA mantiene el orden y clasificacion."
+                }
+              ].map((item) => (
+                <div key={item.title} className="bg-white/5 border border-white/10 rounded-xl p-4">
+                  <p className="text-emerald-300 font-semibold mb-2">{item.title}</p>
+                  <p className="leading-relaxed">{item.text}</p>
+                </div>
+              ))}
+            </div>
+
+            <h2 className="text-2xl font-semibold mb-4">Planes</h2>
             <div className="overflow-auto">
               <table className="w-full min-w-[520px] text-sm text-slate-300 border border-white/10">
                 <thead className="text-left text-xs uppercase tracking-wide text-slate-400 bg-white/5">
@@ -233,9 +218,9 @@ export default function Enterprise() {
                 </thead>
                 <tbody>
                   {[
-                    { plan: "Base", ideal: "Hasta 100 casos al mes", price: "Tarifa fija" },
-                    { plan: "Intermedio", ideal: "100 a 500 casos mensuales", price: "Fijo + variable" },
-                    { plan: "Corporativo", ideal: "+500 casos o soporte total", price: "A medida" }
+                    { plan: "Base", ideal: "Hasta 100 casos/mes", price: "Tarifa fija" },
+                    { plan: "Intermedio", ideal: "100 a 500 casos/mes", price: "Fijo + variable" },
+                    { plan: "Corporativo", ideal: "+500 casos o soporte total", price: "Cotizacion a medida" }
                   ].map((row) => (
                     <tr key={row.plan} className="border-t border-white/10">
                       <td className="px-4 py-3 font-semibold">{row.plan}</td>
@@ -246,14 +231,11 @@ export default function Enterprise() {
                 </tbody>
               </table>
             </div>
+
             <div className="mt-4 grid md:grid-cols-3 gap-3 text-xs text-slate-300">
-              {[
-                "Casos estructurados",
-                "Reportes mensuales",
-                "Asistencia en mejoras operativas"
-              ].map((item) => (
+              {["Casos estructurados", "Reportes mensuales", "Mejora de procesos"].map((item) => (
                 <div key={item} className="bg-white/5 border border-white/10 rounded-lg px-3 py-2">
-                  ✔ {item}
+                  {item}
                 </div>
               ))}
             </div>
@@ -261,20 +243,17 @@ export default function Enterprise() {
         </section>
 
         <section className="text-center">
-          <h2 className="text-2xl font-semibold mb-3">¿Querés que procesemos tus reclamos</h2>
-          <p className="text-sm text-slate-300 mb-2">
-            Escribinos a: soporte@rfargentina.com
-          </p>
-          <p className="text-sm text-slate-300">
-            o llená el formulario para que nos comuniquemos con tu empresa.
-          </p>
+          <h2 className="text-2xl font-semibold mb-3">Contacto</h2>
+          <p className="text-sm text-slate-300 mb-2">soporte@rfargentina.com</p>
+          <p className="text-sm text-slate-300">o completa el siguiente formulario:</p>
         </section>
 
         <section className="bg-white/10 border border-white/10 rounded-2xl p-8">
           <h2 className="text-2xl font-semibold mb-2">Formulario de contacto para empresas</h2>
-          <p className="text-sm text-slate-300 mb-6">
-            Completá los datos y te contactamos a la brevedad.
+          <p className="text-sm text-slate-400 mb-4">
+            El acceso al panel de empresa se habilita unicamente por RFA. No hay registro publico para cuentas empresa.
           </p>
+          <p className="text-sm text-slate-300 mb-6">Completa los datos y te contactamos a la brevedad.</p>
 
           <form onSubmit={handleSubmit} className="grid gap-4">
             <div className="grid md:grid-cols-2 gap-4">
@@ -300,10 +279,19 @@ export default function Enterprise() {
                 >
                   <option value="">Seleccionar</option>
                   <option value="Bancos">Bancos</option>
-                  <option value="Retail">Retail</option>
+                  <option value="Comercio minorista / e-commerce">Comercio minorista / e-commerce</option>
+                  <option value="Fintech / billeteras digitales">Fintech / billeteras digitales</option>
+                  <option value="Tarjetas / medios de pago">Tarjetas / medios de pago</option>
                   <option value="Seguros">Seguros</option>
                   <option value="Salud">Salud</option>
-                  <option value="Logistica">Logística</option>
+                  <option value="Telecomunicaciones">Telecomunicaciones</option>
+                  <option value="Servicios publicos">Servicios publicos</option>
+                  <option value="Educacion">Educacion</option>
+                  <option value="Turismo y transporte">Turismo y transporte</option>
+                  <option value="Logistica">Logistica</option>
+                  <option value="Tecnologia / SaaS">Tecnologia / SaaS</option>
+                  <option value="Agroindustria">Agroindustria</option>
+                  <option value="Inmobiliario">Inmobiliario</option>
                   <option value="Otros">Otros</option>
                 </select>
               </div>
@@ -335,7 +323,7 @@ export default function Enterprise() {
             </div>
 
             <div>
-              <label className="text-sm text-slate-300">Teléfono (opcional)</label>
+              <label className="text-sm text-slate-300" htmlFor="empresa-telefono">Telefono (opcional)</label>
               <input
                 type="text"
                 className="mt-2 w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
@@ -346,14 +334,13 @@ export default function Enterprise() {
             </div>
 
             <div>
-              <label className="text-sm text-slate-300">¿Qué tipo de servicio les interesa</label>
-              <div id="empresa-servicios"
-                className="mt-2 grid md:grid-cols-2 gap-2 text-sm text-slate-300">
+              <label className="text-sm text-slate-300">Que tipo de servicio les interesa?</label>
+              <div className="mt-2 grid md:grid-cols-2 gap-2 text-sm text-slate-300">
                 {[
-                  "Organización de reclamos de clientes",
+                  "Organizacion de reclamos de clientes",
                   "Armado de casos legales/documentales",
-                  "Colaboración en automatización de procesos",
-                  "Soporte externo para atención al cliente",
+                  "Automatizacion de procesos",
+                  "Soporte externo (opcional y a demanda)",
                   "Otro (especificar)"
                 ].map((item) => (
                   <label key={item} className="flex items-center gap-2">
@@ -369,7 +356,7 @@ export default function Enterprise() {
             </div>
 
             <div>
-              <label className="text-sm text-slate-300">Breve descripción del problema o necesidad actual</label>
+              <label className="text-sm text-slate-300" htmlFor="empresa-descripcion">Breve descripcion del problema o necesidad</label>
               <textarea
                 className="mt-2 w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400 min-h-[140px]"
                 id="empresa-descripcion"
@@ -410,15 +397,13 @@ export default function Enterprise() {
                 {sending ? "Enviando..." : "Enviar consulta"}
               </Button>
             </div>
-            {sent && (
-              <p className="text-sm text-emerald-300">Consulta enviada. Te contactamos a la brevedad.</p>
-            )}
-            {error && (
-              <p className="text-sm text-rose-300">{error}</p>
-            )}
+
+            {sent && <p className="text-sm text-emerald-300">Consulta enviada. Te contactamos a la brevedad.</p>}
+            {error && <p className="text-sm text-rose-300">{error}</p>}
           </form>
         </section>
       </div>
     </div>
   );
 }
+

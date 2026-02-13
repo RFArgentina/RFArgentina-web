@@ -69,6 +69,7 @@ web_modules/
 .env
 .env.*
 !.env.example
+!.env.production.example
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
@@ -141,3 +142,4 @@ rfa.db
 uploads/
 verify_email.js
 verify_email.mjs
+backups/

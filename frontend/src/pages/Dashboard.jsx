@@ -31,10 +31,24 @@ export default function Dashboard() {
   const [expandedCaseId, setExpandedCaseId] = useState(null);
   const [expandedCaseDetailId, setExpandedCaseDetailId] = useState(null);
   const [expandedInquiryId, setExpandedInquiryId] = useState(null);
+  const [transferPlanId, setTransferPlanId] = useState(null);
+  const [infoPlanId, setInfoPlanId] = useState(null);
   const [enterpriseInquiries, setEnterpriseInquiries] = useState([]);
+  const [enterpriseUsers, setEnterpriseUsers] = useState([]);
+  const [selectedEnterpriseUserId, setSelectedEnterpriseUserId] = useState("");
+  const [importFile, setImportFile] = useState(null);
+  const [importSummary, setImportSummary] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [enterpriseStatusDrafts, setEnterpriseStatusDrafts] = useState({});
+  const [enterprisePriorityDrafts, setEnterprisePriorityDrafts] = useState({});
+  const [enterpriseSearchQuery, setEnterpriseSearchQuery] = useState("");
+  const [enterpriseFilterStatus, setEnterpriseFilterStatus] = useState("");
+  const [enterpriseFilterPriority, setEnterpriseFilterPriority] = useState("");
+  const [expandedEnterpriseCaseDetailId, setExpandedEnterpriseCaseDetailId] = useState(null);
   const [showNewCaseForm, setShowNewCaseForm] = useState(true);
   const [adminNote, setAdminNote] = useState("");
   const [adminStatus, setAdminStatus] = useState("");
+  const [adminPriority, setAdminPriority] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [filterPlan, setFilterPlan] = useState("");
   const [filterMoneda, setFilterMoneda] = useState("");
@@ -56,13 +70,15 @@ export default function Dashboard() {
     "Respuesta recibida",
     "Cerrado"
   ];
+  const enterpriseStatusOptions = ["Recibido", "En analisis", "Pendiente interno", "Cerrado"];
+  const priorityOptions = ["Alta", "Media", "Baja"];
 
   const statusTemplates = {
     "Recibido": "Caso recibido correctamente. En breve iniciamos el análisis.",
     "En análisis": "Estamos revisando la documentación y el relato para determinar la viabilidad.",
     "Documentación solicitada": "Te solicitamos documentación adicional para avanzar con el reclamo.",
     "Viable (pendiente de pago)":
-      "Tu caso es viable. Te enviamos una carpeta demo. Para continuar, te recomendamos el Plan Seguimiento (2 cuotas sin interés).",
+      "Tu caso es viable. Te enviamos una carpeta demo. Para continuar, te recomendamos Plan Gestion Basica o Plan Completo.",
     "No viable": "Luego de analizar la información, el caso no resulta viable por el momento.",
     "Presentado ante entidad": "Reclamo presentado formalmente ante la entidad. Seguimos el proceso.",
     "En espera de respuesta": "El reclamo ya fue enviado. Estamos esperando respuesta de la entidad.",
@@ -85,9 +101,12 @@ export default function Dashboard() {
     }) || null;
   };
 
-  const getPlanPaymentLinks = (planName = "") => {
-    const plan = findPlanByName(planName);
-    return plan.payment || null;
+  const BANK_TRANSFER = {
+    titular: "Reclamos Financieros Argentina",
+    banco: "Banco Galicia",
+    cbu: "0000003100000000000000",
+    alias: "RFA.RECLAMOS.ARG",
+    referencia: "Indica tu email y plan elegido en el comprobante"
   };
 
   const isNewCase = (c) => {
@@ -121,19 +140,20 @@ export default function Dashboard() {
   ];
 
   const isAdmin = user?.role === "admin";
+  const isEnterprise = user?.role === "enterprise";
   const activeCases = useMemo(
     () => cases.filter((c) => c.estado !== "Cerrado"),
     [cases]
   );
   const hasActiveCase = activeCases.length > 0;
-  const hasTotalPlan = cases.some((c) => {
+  const hasMultipleCasesPlan = cases.some((c) => {
     const plan = (c.plan_elegido || "")
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .toLowerCase();
-    return plan.includes("total");
+    return plan.includes("plan completo");
   });
-  const canCreateCase = !hasActiveCase || hasTotalPlan;
+  const canCreateCase = !hasActiveCase || hasMultipleCasesPlan;
 
   const adminFilteredCases = useMemo(() => {
     if (!isAdmin) return cases;
@@ -188,6 +208,26 @@ export default function Dashboard() {
   }, [sortedCases, page, pageSize, isAdmin]);
 
   const visibleCases = isAdmin ? sortedCases : cases;
+  const enterpriseVisibleCases = useMemo(() => {
+    if (!isEnterprise) return [];
+    const query = enterpriseSearchQuery.trim().toLowerCase();
+    return cases.filter((c) => {
+      const matchStatus = !enterpriseFilterStatus || (c.estado || "Recibido") === enterpriseFilterStatus;
+      const matchPriority = !enterpriseFilterPriority || (c.prioridad || "Media") === enterpriseFilterPriority;
+      if (!query) return matchStatus && matchPriority;
+      const haystack = [
+        c.case_code,
+        c.nombre_completo,
+        c.id,
+        c.email_contacto,
+        c.dni_cuit
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return matchStatus && matchPriority && haystack.includes(query);
+    });
+  }, [cases, enterpriseSearchQuery, enterpriseFilterStatus, enterpriseFilterPriority, isEnterprise]);
 
   const getMontoBadge = (moneda, escala) => {
     if (!moneda || !escala) return { label: "Monto sin clasificar", className: "bg-white/10 text-slate-300" };
@@ -220,6 +260,38 @@ export default function Dashboard() {
     };
     return map[status] || "bg-white/10 text-slate-300";
   };
+
+  const getPriorityBadge = (priority) => {
+    const map = {
+      Alta: "bg-rose-500/40 text-rose-200",
+      Media: "bg-amber-500/40 text-amber-200",
+      Baja: "bg-emerald-500/30 text-emerald-200"
+    };
+    return map[priority] || "bg-white/10 text-slate-300";
+  };
+
+  const getStatusBoxClass = (status) => {
+    const map = {
+      Recibido: "border-slate-400/50 bg-slate-500/20",
+      "En analisis": "border-sky-400/60 bg-sky-500/20",
+      "Pendiente interno": "border-amber-400/60 bg-amber-500/20",
+      Cerrado: "border-slate-400/60 bg-slate-500/20"
+    };
+    return map[status] || "border-white/20 bg-white/5";
+  };
+
+  const getPriorityBoxClass = (priority, status) => {
+    if (status === "Cerrado") {
+      return "border-slate-400/60 bg-slate-500/20";
+    }
+    const map = {
+      Alta: "border-rose-400/60 bg-rose-500/20",
+      Media: "border-amber-400/60 bg-amber-500/20",
+      Baja: "border-emerald-400/60 bg-emerald-500/20"
+    };
+    return map[priority] || "border-white/20 bg-white/5";
+  };
+
 
   useEffect(() => {
     if (!getToken()) {
@@ -269,6 +341,8 @@ export default function Dashboard() {
       if (me.role === "admin") {
         const inquiries = await apiRequest("/enterprise");
         setEnterpriseInquiries(inquiries || []);
+        const enterpriseUsersData = await apiRequest("/enterprise-users");
+        setEnterpriseUsers(enterpriseUsersData || []);
       }
     } catch (err) {
       setError(err.message);
@@ -300,6 +374,22 @@ export default function Dashboard() {
 
   const handleToggleCaseDetails = (caseId) => {
     setExpandedCaseDetailId((prev) => (prev === caseId ? null : caseId));
+  };
+
+  const handleToggleEnterpriseCaseDetails = async (caseId) => {
+    if (expandedEnterpriseCaseDetailId === caseId) {
+      setExpandedEnterpriseCaseDetailId(null);
+      return;
+    }
+    setExpandedEnterpriseCaseDetailId(caseId);
+    if (!updates[caseId]) {
+      try {
+        const data = await apiRequest(`/cases/${caseId}/updates`);
+        setUpdates((prev) => ({ ...prev, [caseId]: data || [] }));
+      } catch (err) {
+        setError(err.message || "No se pudo cargar el historial del caso.");
+      }
+    }
   };
 
   const handleDownloadAttachment = async (caseId, file) => {
@@ -367,11 +457,14 @@ export default function Dashboard() {
     if (!sortedCases.length) return;
     const headers = [
       "ID",
+      "Codigo",
+      "Empresa",
       "Cliente",
       "Email",
       "Entidad",
       "Plan",
       "Estado",
+      "Prioridad",
       "Moneda",
       "Escala",
       "Monto",
@@ -383,11 +476,14 @@ export default function Dashboard() {
     };
     const rows = sortedCases.map((c) => [
       c.id,
+      c.case_code || "",
+      c.empresa || c.enterprise_email || "",
       c.nombre_completo || "",
       c.email_contacto || c.user_email || "",
       c.entidad || "",
       c.plan_elegido || "",
       c.estado || "",
+      c.prioridad || "",
       c.monto_moneda || "",
       c.monto_escala || "",
       c.monto_valor || "",
@@ -408,7 +504,7 @@ export default function Dashboard() {
   const handleCreateCase = async (event) => {
     event.preventDefault();
     if (!canCreateCase) {
-      setError("Solo podés cargar un nuevo reclamo si tenés Plan Total.");
+      setError("Solo podés cargar un nuevo reclamo si tenés Plan Completo.");
       return;
     }
     setSubmitting(true);
@@ -458,6 +554,73 @@ export default function Dashboard() {
     }
   };
 
+  const handleImportCases = async (event) => {
+    event.preventDefault();
+    if (!selectedEnterpriseUserId) {
+      setError("Selecciona un usuario empresa para importar.");
+      return;
+    }
+    if (!importFile) {
+      setError("Debes adjuntar un archivo CSV.");
+      return;
+    }
+    setImporting(true);
+    setError("");
+    setImportSummary(null);
+    try {
+      const formData = new FormData();
+      formData.append("enterprise_user_id", selectedEnterpriseUserId);
+      formData.append("file", importFile);
+      const result = await apiRequest("/cases/import", {
+        method: "POST",
+        body: formData
+      });
+      setImportSummary(result);
+      setImportFile(null);
+      await loadCases();
+    } catch (err) {
+      setError(err.message || "No se pudo importar casos.");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleEnterpriseUpdateCase = async (caseId) => {
+    const nextStatus = enterpriseStatusDrafts[caseId];
+    const nextPriority = enterprisePriorityDrafts[caseId];
+    if (!nextStatus && !nextPriority) {
+      setError("Debes elegir estado o prioridad para actualizar.");
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    try {
+      await apiRequest(`/cases/${caseId}/updates`, {
+        method: "POST",
+        body: JSON.stringify({
+          mensaje: "Actualizacion interna de empresa.",
+          estado: nextStatus || null,
+          prioridad: nextPriority || null
+        })
+      });
+      await loadCases();
+      setEnterpriseStatusDrafts((prev) => {
+        const next = { ...prev };
+        delete next[caseId];
+        return next;
+      });
+      setEnterprisePriorityDrafts((prev) => {
+        const next = { ...prev };
+        delete next[caseId];
+        return next;
+      });
+    } catch (err) {
+      setError(err.message || "No se pudo actualizar el caso.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleToggleUpdates = async (caseId) => {
     if (expandedCaseId === caseId) {
       setExpandedCaseId(null);
@@ -485,10 +648,11 @@ export default function Dashboard() {
     try {
       await apiRequest(`/cases/${caseId}/updates`, {
         method: "POST",
-        body: JSON.stringify({ mensaje: adminNote, estado: adminStatus || null })
+        body: JSON.stringify({ mensaje: adminNote, estado: adminStatus || null, prioridad: adminPriority || null })
       });
       setAdminNote("");
       setAdminStatus("");
+      setAdminPriority("");
       const data = await apiRequest(`/cases/${caseId}/updates`);
       setUpdates((prev) => ({ ...prev, [caseId]: data || [] }));
       await loadCases();
@@ -519,9 +683,7 @@ export default function Dashboard() {
           <div>
             <h1 className="text-3xl font-bold">Panel de casos</h1>
             <p className="text-slate-300">
-              {isAdmin ?
-                 "Panel administrador: revisá y actualizá todos los reclamos."
-                : "Cargá nuevos reclamos y seguí el estado."}
+              {isAdmin ? "Panel administrador: revisa y actualiza todos los reclamos." : isEnterprise ? "Panel empresa: organiza y clasifica casos con estado y prioridad." : "Carga nuevos reclamos y sigue el estado."}
             </p>
           </div>
           <Button onClick={handleLogout} className="bg-white/10 hover:bg-white/20 text-white">
@@ -530,7 +692,7 @@ export default function Dashboard() {
         </div>
 
         <div className={`grid gap-8 ${isAdmin ? "md:grid-cols-1" : "md:grid-cols-1"}`}>
-          {!isAdmin && (
+          {!isAdmin && !isEnterprise && (
           <div className="bg-white/10 border border-white/10 rounded-2xl p-6 backdrop-blur">
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
               <div>
@@ -547,7 +709,7 @@ export default function Dashboard() {
             </div>
             {!canCreateCase && (
               <div className="mb-4 rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-                Ya tenés un reclamo activo. Para cargar uno nuevo necesitás Plan Total.
+                Ya tenés un reclamo activo. Para cargar uno nuevo necesitás Plan Completo.
               </div>
             )}
             {showNewCaseForm && (
@@ -721,7 +883,7 @@ export default function Dashboard() {
           )}
 
           <div className="space-y-4">
-            <h2 className="text-xl font-semibold">{isAdmin ? "Grilla Administrativa" : "Mis reclamos"}</h2>
+            <h2 className="text-xl font-semibold">{isAdmin ? "Panel administrador: revisa y actualiza todos los reclamos." : isEnterprise ? "Panel empresa: organiza y clasifica casos con estado y prioridad." : "Carga nuevos reclamos y sigue el estado."}</h2>
 
             {isAdmin && (
               <div className="bg-white/10 border border-white/10 rounded-2xl p-4">
@@ -815,42 +977,100 @@ export default function Dashboard() {
               </div>
             )}
 
+            {isAdmin && (
+              <div className="bg-white/10 border border-white/10 rounded-2xl p-4">
+                <h3 className="text-lg font-semibold mb-3">Carga masiva de casos por empresa</h3>
+                <form onSubmit={handleImportCases} className="grid md:grid-cols-4 gap-3 items-end">
+                  <div className="md:col-span-2">
+                    <label className="text-xs text-slate-300">Usuario empresa destino</label>
+                    <select
+                      className="mt-1 w-full rounded-lg bg-slate-900/70 border border-white/20 px-3 py-2 text-white"
+                      value={selectedEnterpriseUserId}
+                      onChange={(e) => setSelectedEnterpriseUserId(e.target.value)}
+                    >
+                      <option value="">Seleccionar usuario empresa</option>
+                      {enterpriseUsers.map((enterpriseUser) => (
+                        <option key={enterpriseUser.id} value={enterpriseUser.id}>
+                          {enterpriseUser.email}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-300">Archivo CSV</label>
+                    <input
+                      type="file"
+                      accept=".csv,text/csv"
+                      className="mt-1 w-full rounded-lg bg-white/10 border border-white/10 px-3 py-2 text-white"
+                      onChange={(e) => setImportFile(e.target.files?.[0] || null)}
+                    />
+                  </div>
+                  <Button
+                    type="submit"
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                    disabled={importing}
+                  >
+                    {importing ? "Importando..." : "Importar casos"}
+                  </Button>
+                </form>
+                {importSummary && (
+                  <div className="mt-3 text-sm text-slate-200 space-y-1">
+                    <p>Total: {importSummary.total} | Importados: {importSummary.imported} | Rechazados: {importSummary.rejected}</p>
+                    {Array.isArray(importSummary.rejectedRows) && importSummary.rejectedRows.length > 0 && (
+                      <div className="rounded-lg border border-amber-400/30 bg-amber-500/10 p-3 text-xs text-amber-100">
+                        {importSummary.rejectedRows.slice(0, 10).map((r) => (
+                          <p key={`${r.line}-${r.reason}`}>Línea {r.line}: {r.reason}</p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {loading && <p className="text-slate-300">Cargando casos...</p>}
             {!loading && (isAdmin ? sortedCases.length === 0 : visibleCases.length === 0) && (
-              <p className="text-slate-300">{isAdmin ? "No hay casos para los filtros seleccionados." : "Todavía no tenés reclamos cargados."}</p>
+              <p className="text-slate-300">{isAdmin ? "Panel administrador: revisa y actualiza todos los reclamos." : isEnterprise ? "Panel empresa: organiza y clasifica casos con estado y prioridad." : "Carga nuevos reclamos y sigue el estado."}</p>
             )}
 
             {!loading && isAdmin && sortedCases.length > 0 && (
               <div className="bg-white/10 border border-white/10 rounded-2xl overflow-hidden">
                 <div className="overflow-auto">
-                  <table className="w-full min-w-[980px] border-collapse">
+                  <table className="w-full min-w-[1180px] border-collapse">
                     <thead>
                       <tr className="text-left text-xs uppercase tracking-wide text-slate-300 border-b border-white/10">
                         <th className="px-4 py-3">
                           <button type="button" className="uppercase tracking-wide" onClick={() => handleSort("nombre_completo")}>
-                            Cliente {sortKey === "nombre_completo" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                            Cliente {sortKey === "nombre_completo" ? (sortDir === "asc" ? "?" : "?") : ""}
                           </button>
                         </th>
+                        <th className="px-4 py-3">Codigo</th>
+                        <th className="px-4 py-3">Empresa</th>
                         <th className="px-4 py-3">Contacto</th>
                         <th className="px-4 py-3">
                           <button type="button" className="uppercase tracking-wide" onClick={() => handleSort("entidad")}>
-                            Entidad {sortKey === "entidad" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                            Entidad {sortKey === "entidad" ? (sortDir === "asc" ? "?" : "?") : ""}
                           </button>
                         </th>
                         <th className="px-4 py-3">Monto</th>
                         <th className="px-4 py-3">
                           <button type="button" className="uppercase tracking-wide" onClick={() => handleSort("plan_elegido")}>
-                            Plan {sortKey === "plan_elegido" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                            Plan {sortKey === "plan_elegido" ? (sortDir === "asc" ? "?" : "?") : ""}
                           </button>
                         </th>
                         <th className="px-4 py-3">
                           <button type="button" className="uppercase tracking-wide" onClick={() => handleSort("estado")}>
-                            Estado {sortKey === "estado" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                            Estado {sortKey === "estado" ? (sortDir === "asc" ? "?" : "?") : ""}
+                          </button>
+                        </th>
+                        <th className="px-4 py-3">
+                          <button type="button" className="uppercase tracking-wide" onClick={() => handleSort("prioridad")}>
+                            Prioridad {sortKey === "prioridad" ? (sortDir === "asc" ? "?" : "?") : ""}
                           </button>
                         </th>
                         <th className="px-4 py-3">
                           <button type="button" className="uppercase tracking-wide" onClick={() => handleSort("created_at")}>
-                            Fecha {sortKey === "created_at" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                            Fecha {sortKey === "created_at" ? (sortDir === "asc" ? "?" : "?") : ""}
                           </button>
                         </th>
                         <th className="px-4 py-3">Accion</th>
@@ -875,6 +1095,8 @@ export default function Dashboard() {
                               </div>
                               <p className="text-xs text-slate-400">{c.dni_cuit || "-"}</p>
                             </td>
+                            <td className="px-4 py-3 text-sm text-slate-200">{c.case_code || "-"}</td>
+                            <td className="px-4 py-3 text-sm text-slate-200">{c.empresa || c.enterprise_email || "-"}</td>
                             <td className="px-4 py-3">
                               <p className="text-sm text-slate-200">{c.user_email || c.email_contacto || "Sin email"}</p>
                               <p className="text-xs text-slate-400">{c.telefono || "-"}</p>
@@ -893,6 +1115,11 @@ export default function Dashboard() {
                             <td className="px-4 py-3">
                               <span className={`inline-flex px-2 py-1 rounded-full text-xs font-semibold ${getStatusBadge(c.estado)}`}>
                                 {c.estado}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex px-2 py-1 rounded-full text-xs font-semibold ${getPriorityBadge(c.prioridad)}`}>
+                                {c.prioridad || "Media"}
                               </span>
                             </td>
                             <td className="px-4 py-3 text-xs text-slate-400">
@@ -917,7 +1144,7 @@ export default function Dashboard() {
                           </tr>
                           {expandedCaseDetailId === c.id && (
                             <tr className="border-b border-white/10 bg-white/5">
-                              <td colSpan={8} className="px-4 py-4">
+                              <td colSpan={11} className="px-4 py-4">
                                 <div className="grid md:grid-cols-2 gap-4 text-sm text-slate-300">
                                   <div>
                                     <p className="text-slate-400 text-xs uppercase mb-1">Resumen</p>
@@ -1005,7 +1232,7 @@ export default function Dashboard() {
               </div>
             )}
 
-            {!loading && !isAdmin && visibleCases.map((c) => (
+            {!loading && !isAdmin && !isEnterprise && visibleCases.map((c) => (
               <div key={c.id} className="bg-white/10 border border-white/10 rounded-2xl p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -1043,7 +1270,7 @@ export default function Dashboard() {
                         </div>
                       </div>
                     ))}
-                    {c.estado === "Viable (pendiente de pago)" && c.plan_elegido && getPlanPaymentLinks(c.plan_elegido) && (
+                    {c.estado === "Viable (pendiente de pago)" && c.plan_elegido && findPlanByName(c.plan_elegido) && (
                       <div className="border border-white/10 rounded-xl p-4 bg-white/5">
                         <p className="text-sm text-slate-300 mb-3">
                           Tu caso es viable. Continua el proceso con el pago del plan.
@@ -1051,15 +1278,37 @@ export default function Dashboard() {
                         <div className="flex flex-wrap gap-3">
                           <Button
                             className="bg-emerald-500 hover:bg-emerald-600 text-white"
-                            onClick={() => window.open(getPlanPaymentLinks(c.plan_elegido).mp, "_blank")}>
-                            MercadoPago
+                            onClick={() => setTransferPlanId((prev) => (prev === c.id ? null : c.id))}>
+                            Contratar plan
                           </Button>
                           <Button
                             className="bg-white/10 hover:bg-white/20 text-white"
-                            onClick={() => window.open(getPlanPaymentLinks(c.plan_elegido).paypal, "_blank")}>
-                            PayPal
+                            onClick={() => setInfoPlanId((prev) => (prev === c.id ? null : c.id))}>
+                            Mas informacion
                           </Button>
                         </div>
+                        {transferPlanId === c.id && (
+                          <div className="mt-3 rounded-lg border border-emerald-400/30 bg-emerald-500/10 p-3 text-xs text-emerald-100 space-y-1">
+                            <p><strong>Titular:</strong> {BANK_TRANSFER.titular}</p>
+                            <p><strong>Banco:</strong> {BANK_TRANSFER.banco}</p>
+                            <p><strong>CBU:</strong> {BANK_TRANSFER.cbu}</p>
+                            <p><strong>Alias:</strong> {BANK_TRANSFER.alias}</p>
+                            <p className="text-emerald-200/90">{BANK_TRANSFER.referencia}</p>
+                          </div>
+                        )}
+                        {infoPlanId === c.id && (
+                          <div className="mt-3 rounded-lg border border-white/15 bg-white/5 p-3 text-xs text-slate-200">
+                            <p className="mb-2 font-semibold text-emerald-300">Trabajo detallado del plan</p>
+                            {findPlanByName(c.plan_elegido)?.summary && (
+                              <p className="mb-2 text-slate-300 leading-relaxed">{findPlanByName(c.plan_elegido)?.summary}</p>
+                            )}
+                            <ul className="space-y-1">
+                              {(findPlanByName(c.plan_elegido)?.details || []).map((item) => (
+                                <li key={item}>• {item}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1067,7 +1316,175 @@ export default function Dashboard() {
               </div>
             ))}
 
-            {!isAdmin && (
+            {!loading && isEnterprise && (
+              <div className="bg-white/10 border border-white/10 rounded-2xl overflow-hidden">
+                <div className="px-4 py-4 border-b border-white/10 bg-white/5">
+                  <div className="grid md:grid-cols-4 gap-3">
+                    <input
+                      className="rounded-lg bg-slate-900/50 border border-white/15 px-3 py-2 text-sm text-white placeholder:text-slate-400"
+                      placeholder="Buscar por codigo o cliente"
+                      value={enterpriseSearchQuery}
+                      onChange={(e) => setEnterpriseSearchQuery(e.target.value)}
+                    />
+                    <select
+                      className="rounded-lg bg-slate-900/50 border border-white/15 px-3 py-2 text-sm text-white"
+                      value={enterpriseFilterStatus}
+                      onChange={(e) => setEnterpriseFilterStatus(e.target.value)}
+                    >
+                      <option value="">Todos los estados</option>
+                      {enterpriseStatusOptions.map((status) => (
+                        <option key={status} value={status}>{status}</option>
+                      ))}
+                    </select>
+                    <select
+                      className="rounded-lg bg-slate-900/50 border border-white/15 px-3 py-2 text-sm text-white"
+                      value={enterpriseFilterPriority}
+                      onChange={(e) => setEnterpriseFilterPriority(e.target.value)}
+                    >
+                      <option value="">Todas las prioridades</option>
+                      {priorityOptions.map((priority) => (
+                        <option key={priority} value={priority}>{priority}</option>
+                      ))}
+                    </select>
+                    <div className="text-xs text-slate-300 flex items-center">
+                      Mostrando {enterpriseVisibleCases.length} casos
+                    </div>
+                  </div>
+                </div>
+                <div className="overflow-auto">
+                  <table className="w-full min-w-[980px] border-collapse">
+                    <thead>
+                      <tr className="text-left text-xs uppercase tracking-wide text-slate-300 border-b border-white/10">
+                        <th className="px-4 py-3">Codigo</th>
+                        <th className="px-4 py-3">Cliente</th>
+                        <th className="px-4 py-3">Estado</th>
+                        <th className="px-4 py-3">Prioridad</th>
+                        <th className="px-4 py-3">Fecha</th>
+                        <th className="px-4 py-3">Accion</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {enterpriseVisibleCases.map((c) => (
+                        <Fragment key={c.id}>
+                          <tr className="border-b border-white/10 align-top">
+                            <td className="px-4 py-3 text-sm text-slate-200">{c.case_code || "-"}</td>
+                            <td className="px-4 py-3 text-sm text-slate-100">{c.nombre_completo || "-"}</td>
+                            <td className="px-4 py-3">
+                              <div
+                                className={`rounded-lg border ${getStatusBoxClass(
+                                  enterpriseStatusDrafts[c.id] ?? c.estado ?? "Recibido"
+                                )}`}
+                              >
+                                <select
+                                  className="w-full rounded-lg bg-transparent px-3 py-2 text-xs font-bold text-slate-100 border-0 focus:outline-none"
+                                  value={enterpriseStatusDrafts[c.id] ?? c.estado ?? "Recibido"}
+                                  onChange={(e) => setEnterpriseStatusDrafts((prev) => ({ ...prev, [c.id]: e.target.value }))}
+                                >
+                                  {enterpriseStatusOptions.map((status) => (
+                                    <option key={status} value={status}>{status}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div
+                                className={`rounded-lg border ${getPriorityBoxClass(
+                                  enterprisePriorityDrafts[c.id] ?? c.prioridad ?? "Media",
+                                  enterpriseStatusDrafts[c.id] ?? c.estado ?? "Recibido"
+                                )}`}
+                              >
+                                <select
+                                  className="w-full rounded-lg bg-transparent px-3 py-2 text-xs font-bold text-slate-100 border-0 focus:outline-none"
+                                  value={enterprisePriorityDrafts[c.id] ?? c.prioridad ?? "Media"}
+                                  onChange={(e) => setEnterprisePriorityDrafts((prev) => ({ ...prev, [c.id]: e.target.value }))}
+                                >
+                                  {priorityOptions.map((priority) => (
+                                    <option key={priority} value={priority}>{priority}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-xs text-slate-400">
+                              {new Date(c.created_at).toLocaleDateString("es-AR")}
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex flex-wrap gap-2">
+                                <Button
+                                  className="bg-emerald-500 hover:bg-emerald-600 text-white"
+                                  disabled={submitting}
+                                  onClick={() => handleEnterpriseUpdateCase(c.id)}
+                                >
+                                  Guardar
+                                </Button>
+                                <Button
+                                  className="bg-white/10 hover:bg-white/20 text-white"
+                                  onClick={() => handleToggleEnterpriseCaseDetails(c.id)}
+                                >
+                                  {expandedEnterpriseCaseDetailId === c.id ? "Ocultar" : "Ver caso"}
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                          {expandedEnterpriseCaseDetailId === c.id && (
+                            <tr className="border-b border-white/10 bg-white/5">
+                              <td colSpan={6} className="px-4 py-4">
+                                <div className="grid md:grid-cols-2 gap-4 text-sm text-slate-300">
+                                  <div><span className="text-slate-400">Codigo:</span> {c.case_code || "-"}</div>
+                                  <div><span className="text-slate-400">Caso ID:</span> {c.id}</div>
+                                  <div><span className="text-slate-400">Cliente:</span> {c.nombre_completo || "-"}</div>
+                                  <div><span className="text-slate-400">DNI/CUIT:</span> {c.dni_cuit || "-"}</div>
+                                  <div><span className="text-slate-400">Email:</span> {c.email_contacto || "-"}</div>
+                                  <div><span className="text-slate-400">Telefono:</span> {c.telefono || "-"}</div>
+                                  <div><span className="text-slate-400">Canal origen:</span> {c.canal_origen || "-"}</div>
+                                  <div><span className="text-slate-400">Fecha del caso:</span> {c.fecha_caso || "-"}</div>
+                                  <div><span className="text-slate-400">Estado:</span> {c.estado || "Recibido"}</div>
+                                  <div><span className="text-slate-400">Prioridad:</span> {c.prioridad || "Media"}</div>
+                                  <div><span className="text-slate-400">Monto:</span> {c.monto_valor ? `${c.monto_valor} ${c.monto_moneda || ""}` : "-"}</div>
+                                  <div><span className="text-slate-400">Escala:</span> {c.monto_escala || "-"}</div>
+                                  <div className="md:col-span-2">
+                                    <span className="text-slate-400">Reclamo:</span>
+                                    <p className="mt-1 whitespace-pre-wrap leading-relaxed">{c.relato || "-"}</p>
+                                  </div>
+                                  <div className="md:col-span-2">
+                                    <span className="text-slate-400">Historial de cambios:</span>
+                                    <div className="mt-2 space-y-2">
+                                      {(updates[c.id] || []).length === 0 && (
+                                        <p className="text-xs text-slate-400">Sin cambios registrados todavia.</p>
+                                      )}
+                                      {(updates[c.id] || []).map((u) => (
+                                        <div key={u.id} className="rounded-lg border border-white/10 bg-white/5 p-3">
+                                          <p className="text-xs text-slate-300">{u.mensaje || "Actualizacion registrada"}</p>
+                                          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                                            {u.estado && (
+                                              <span className={`inline-flex px-2 py-0.5 rounded-full ${getStatusBadge(u.estado)}`}>
+                                                {u.estado}
+                                              </span>
+                                            )}
+                                            {u.prioridad && (
+                                              <span className={`inline-flex px-2 py-0.5 rounded-full ${getPriorityBadge(u.prioridad)}`}>
+                                                {u.prioridad}
+                                              </span>
+                                            )}
+                                            <span>{u.author_email ? `Actualizado por ${u.author_email}` : "Actualizacion registrada"}</span>
+                                            <span>{new Date(u.created_at).toLocaleString("es-AR")}</span>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {!isAdmin && !isEnterprise && (
               <>
                 {/* Educación financiera (oculta por ahora) */}
                 {/* <div className="bg-white/10 border border-white/10 rounded-2xl p-5 space-y-4">
@@ -1075,7 +1492,7 @@ export default function Dashboard() {
                     <h3 className="text-lg font-semibold">Educación financiera</h3>
                     <p className="text-xs text-slate-400">Guías útiles para prevenir y actuar mejor</p>
                   </div>
-                  <div className="grid md:grid-cols-3 gap-4">
+                  <div className="grid md:grid-cols-2 gap-4">
                     {educationPosts.map((post) => (
                       <article
                         id={`educacion-${post.id}`}
@@ -1087,7 +1504,7 @@ export default function Dashboard() {
                         <p className="text-sm text-slate-300 mt-2">{post.excerpt}</p>
                         <ul className="mt-3 space-y-1 text-xs text-slate-300">
                           {post.checklist.map((item) => (
-                            <li key={item}>• {item}</li>
+                            <li key={item}>⬢ {item}</li>
                           ))}
                         </ul>
                         <Button
@@ -1106,32 +1523,55 @@ export default function Dashboard() {
                     <h3 className="text-lg font-semibold">Planes y pagos</h3>
                     <p className="text-xs text-slate-400">Primer contacto y análisis: sin cargo</p>
                   </div>
-                  <div className="grid md:grid-cols-3 gap-4">
+                  <div className="grid md:grid-cols-2 gap-4">
                     {plans.map((plan) => (
                       <div key={plan.name} className="border border-white/10 rounded-xl p-4 bg-white/5">
                         <p className="text-sm text-emerald-300 font-semibold">{plan.name}</p>
+                        {plan.summary && (
+                          <p className="text-xs text-slate-300 mt-2 leading-relaxed">{plan.summary}</p>
+                        )}
                         <p className="text-2xl font-bold mt-1">{plan.price}</p>
-                        <p className="text-xs text-slate-400">{plan.priceUsd}</p>
+                        {plan.priceUsd && <p className="text-xs text-slate-400">{plan.priceUsd}</p>}
                         <p className="text-xs text-slate-400 mb-3">{plan.period}</p>
                         <ul className="space-y-1 text-xs text-slate-300 mb-4">
                           {plan.features.map((item) => (
-                            <li key={item}>• {item}</li>
+                            <li key={item}>⬢ {item}</li>
                           ))}
                         </ul>
                         <div className="flex gap-2">
                           <Button
                             className="bg-emerald-500 hover:bg-emerald-600 text-white w-full"
-                            onClick={() => window.open(plan.payment.mp, "_blank")}
+                            onClick={() => setTransferPlanId((prev) => (prev === plan.id ? null : plan.id))}
                           >
-                            MercadoPago
+                            Contratar plan
                           </Button>
                           <Button
                             className="bg-slate-900 hover:bg-slate-800 text-white w-full"
-                            onClick={() => window.open(plan.payment.paypal, "_blank")}
+                            onClick={() => setInfoPlanId((prev) => (prev === plan.id ? null : plan.id))}
                           >
-                            PayPal
+                            Mas informacion
                           </Button>
                         </div>
+                        {transferPlanId === plan.id && (
+                          <div className="mt-3 rounded-lg border border-emerald-400/30 bg-emerald-500/10 p-3 text-xs text-emerald-100 space-y-1">
+                            <p><strong>Titular:</strong> {BANK_TRANSFER.titular}</p>
+                            <p><strong>Banco:</strong> {BANK_TRANSFER.banco}</p>
+                            <p><strong>CBU:</strong> {BANK_TRANSFER.cbu}</p>
+                            <p><strong>Alias:</strong> {BANK_TRANSFER.alias}</p>
+                            <p className="text-emerald-200/90">{BANK_TRANSFER.referencia}</p>
+                          </div>
+                        )}
+                        {infoPlanId === plan.id && (
+                          <div className="mt-3 rounded-lg border border-white/15 bg-white/5 p-3 text-xs text-slate-200">
+                            <p className="mb-2 font-semibold text-emerald-300">Trabajo detallado del plan</p>
+                            {plan.summary && <p className="mb-2 text-slate-300 leading-relaxed">{plan.summary}</p>}
+                            <ul className="space-y-1">
+                              {(plan.details || []).map((item) => (
+                                <li key={item}>• {item}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -1164,23 +1604,45 @@ export default function Dashboard() {
                       </div>
                     </div>
                   ))}
-                  {c.estado === "Viable (pendiente de pago)" && c.plan_elegido && getPlanPaymentLinks(c.plan_elegido) && (
+                  {c.estado === "Viable (pendiente de pago)" && c.plan_elegido && findPlanByName(c.plan_elegido) && (
                     <div className="border border-white/10 rounded-xl p-4 bg-white/5">
                       <p className="text-sm text-slate-300 mb-3">Caso viable. Enviar pago al cliente:</p>
                       <div className="flex flex-wrap gap-3">
                         <Button
                           className="bg-emerald-500 hover:bg-emerald-600 text-white"
-                          onClick={() => window.open(getPlanPaymentLinks(c.plan_elegido).mp, "_blank")}
+                          onClick={() => setTransferPlanId((prev) => (prev === c.id ? null : c.id))}
                         >
-                          MercadoPago
+                          Contratar plan
                         </Button>
                         <Button
                           className="bg-slate-900 hover:bg-slate-800 text-white"
-                          onClick={() => window.open(getPlanPaymentLinks(c.plan_elegido).paypal, "_blank")}
+                          onClick={() => setInfoPlanId((prev) => (prev === c.id ? null : c.id))}
                         >
-                          PayPal
+                          Mas informacion
                         </Button>
                       </div>
+                      {transferPlanId === c.id && (
+                        <div className="mt-3 rounded-lg border border-emerald-400/30 bg-emerald-500/10 p-3 text-xs text-emerald-100 space-y-1">
+                          <p><strong>Titular:</strong> {BANK_TRANSFER.titular}</p>
+                          <p><strong>Banco:</strong> {BANK_TRANSFER.banco}</p>
+                          <p><strong>CBU:</strong> {BANK_TRANSFER.cbu}</p>
+                          <p><strong>Alias:</strong> {BANK_TRANSFER.alias}</p>
+                          <p className="text-emerald-200/90">{BANK_TRANSFER.referencia}</p>
+                        </div>
+                      )}
+                      {infoPlanId === c.id && (
+                        <div className="mt-3 rounded-lg border border-white/15 bg-white/5 p-3 text-xs text-slate-200">
+                          <p className="mb-2 font-semibold text-emerald-300">Trabajo detallado del plan</p>
+                            {findPlanByName(c.plan_elegido)?.summary && (
+                              <p className="mb-2 text-slate-300 leading-relaxed">{findPlanByName(c.plan_elegido)?.summary}</p>
+                            )}
+                            <ul className="space-y-1">
+                            {(findPlanByName(c.plan_elegido)?.details || []).map((item) => (
+                              <li key={item}>• {item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                     </div>
                   )}
                   <div className="border border-emerald-500/30 rounded-xl p-4 bg-emerald-500/5">
@@ -1198,6 +1660,16 @@ export default function Dashboard() {
                         <option value="">Estado del caso</option>
                         {statusOptions.map((status) => (
                           <option key={status} value={status}>{status}</option>
+                        ))}
+                      </select>
+                      <select
+                        className="w-full rounded-lg bg-slate-900/70 border border-white/20 px-4 py-2 text-white"
+                        value={adminPriority}
+                        onChange={(e) => setAdminPriority(e.target.value)}
+                      >
+                        <option value="">Prioridad (opcional)</option>
+                        {priorityOptions.map((priority) => (
+                          <option key={priority} value={priority}>{priority}</option>
                         ))}
                       </select>
                       <textarea
@@ -1300,4 +1772,8 @@ export default function Dashboard() {
     </div>
   );
 }
+
+
+
+
 
