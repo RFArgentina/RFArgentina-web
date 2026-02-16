@@ -11,6 +11,9 @@ import VerifyEmail from "./pages/VerifyEmail";
 import Dashboard from "./pages/Dashboard";
 import Plans from "./pages/Plans";
 import Enterprise from "./pages/Enterprise";
+import Terms from "./pages/Terms";
+import Privacy from "./pages/Privacy";
+import Cookies from "./pages/Cookies";
 import ErrorBoundary from "./components/ErrorBoundary";
 
 const Home = () => {
@@ -31,6 +34,9 @@ function App() {
             <Route path="/planes" element={<Plans />} />
             <Route path="/empresas" element={<Enterprise />} />
             <Route path="/panel" element={<Dashboard />} />
+            <Route path="/terminos" element={<Terms />} />
+            <Route path="/privacidad" element={<Privacy />} />
+            <Route path="/cookies" element={<Cookies />} />
           </Routes>
         </ErrorBoundary>
       </BrowserRouter>

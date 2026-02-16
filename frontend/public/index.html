@@ -1,203 +1,111 @@
-<!DOCTYPE html>
-<html lang="es">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/x-icon" href="./favicon.ico" />
-    <link rel="apple-touch-icon" href="./favicon.png" sizes="180x180" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#000000" />
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <link rel="icon" type="image/png" sizes="32x32" href="%PUBLIC_URL%/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="%PUBLIC_URL%/favicon-16x16.png" />
+    <link rel="apple-touch-icon" href="%PUBLIC_URL%/apple-touch-icon.png" sizes="180x180" />
 
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 
-    <!-- 🧠 DESCRIPCIÓN -->
-    <meta
-      name="description"
-      content="RFA – Reclamos Financieros Argentina | Consultoría con alcance legal y financiero especializada en reclamos contra bancos, fintech, billeteras digitales y empresas de servicios. Soluciones profesionales con seguimiento real."
-    />
-
-
-    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
-    <title>RFA – Reclamos Financieros Argentina | Consultoría con Alcance Legal</title>
-
-
-    <!-- 🟢 Google tag (gtag.js) -->
-    <script async src="https://www.googletagmanager.com/gtag/jsid=G-BME9VFSYTD"></script>
-    <script>
-      window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
-      gtag('js', new Date());
-      gtag('config', 'G-ZR6DRJD7K9');
-    </script>
-
-
-    <!-- 🔍 SEO EXTENDIDO -->
-    <meta
-      name="keywords"
-      content="RFA, Reclamos Financieros Argentina, reclamos financieros, consultoría financiera, defensa del consumidor, tuquejasuma, tu queja suma, reclamos legales, reclamos flow, reclamos telecom, reclamos banco nación, reclamos banco galicia, reclamos mercado pago, reclamos fintech, reclamos billeteras digitales, asesoramiento financiero, denuncias colectivas, defensa usuario, reclamo por cobro indebido, reclamos por deuda inexistente, reclamos por hostigamiento, RFA Argentina, reclamos rfa, reclamos legales argentina, consultoría legal financiera"
-    />
-    <meta name="author" content="Reclamos Financieros Argentina (RFA)" />
-    <meta name="robots" content="index, follow" />
-    <link rel="canonical" href="https://rfargentina.com" />
-
-
-    <!-- 🌐 OPEN GRAPH -->
-    <meta property="og:title" content="RFA – Reclamos Financieros Argentina" />
-    <meta property="og:description" content="Consultoría con alcance legal y financiero. Reclamos contra bancos, fintech, billeteras y servicios. Atención profesional en Argentina." />
-    <meta property="og:url" content="https://rfargentina.com" />
-    <meta property="og:type" content="website" />
-    <meta property="og:image" content="https://rfargentina.com/img/rfa-logo.png" />
-
-
-    <!-- 🐦 TWITTER -->
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="RFA – Reclamos Financieros Argentina" />
-    <meta name="twitter:description" content="Asistencia profesional con alcance legal. Reclamos ante bancos, fintech y servicios en Argentina." />
-    <meta name="twitter:image" content="https://rfargentina.com/img/rfa-logo.png" />
-
-
-    <!-- 📈 BUSQUEDAS SIMILARES Y ERRORES DE TIPEO -->
-    <meta name="alias" content="tuquejasuma, tu quejasuma, tu quejas umar, tuqujasuma, rfa argentina, reclamosfinancieros, reclamosfinanciero, reclaos financieros, RFA consultoria, reclamos tuquejasuma" />
-    <meta name="alternate" content="reclamosfinancierosargentina.com, rfaargentina.com.ar, rfa-financieros.com" />
-
-
-    <!-- 🧭 ESTRUCTURA SEO INVISIBLE -->
-    <script type="application/ld+json">
-      
-    {
-      "@context": "https://schema.org",
-      "@type": "Organization",
-      "name": "Reclamos Financieros Argentina (RFA)",
-      "url": "https://rfargentina.com",
-      "logo": "https://rfargentina.com/img/rfa-logo.png",
-      "sameAs": [
-        "https://www.facebook.com/rfargentina",
-        "https://www.instagram.com/rfargentina",
-        "https://www.linkedin.com/company/reclamos-financieros-argentina"
-      ],
-      "description": "Consultoría con alcance legal y financiero. Reclamos ante bancos, fintech, billeteras y servicios.",
-      "contactPoint": {
-        "@type": "ContactPoint",
-        "email": "soporte@rfargentina.com",
-        "contactType": "customer support",
-        "areaServed": "AR"
-      }
-    }
-    </script>
-    <!-- 🧠 Datos estructurados de RFA para SEO -->
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "Organization",
-  "name": "Reclamos Financieros Argentina",
-  "alternateName": ["RFA", "Reclamos Financieros", "Consultoría Financiera con Alcance Legal"],
-  "url": "https://rfargentina.com",
-  "logo": "https://rfargentina.com/img/rfa-logo.png",
-  "sameAs": [
-    "https://www.facebook.com/RFAArgentina",
-    "https://www.instagram.com/RFAArgentina",
-    "https://x.com/RFAArgentina_"
-  ],
-  "description": "Consultoría financiera con alcance legal especializada en reclamos ante bancos, billeteras digitales y fintech en Argentina. RFA brinda asesoramiento profesional para resolver casos de cobros indebidos, bloqueos y malas prácticas empresariales.",
-  "address": {
-    "@type": "PostalAddress",
-    "addressCountry": "AR",
-    "addressRegion": "Buenos Aires",
-    "addressLocality": "Argentina"
-  },
-  "contactPoint": {
-    "@type": "ContactPoint",
-    "telephone": "+54",
-    "contactType": "Atención al usuario",
-    "email": "soporte@rfargentina.com",
-    "availableLanguage": ["Español"]
-  },
-  "keywords": [
-    "reclamos financieros",
-    "defensa del consumidor",
-    "billeteras digitales",
-    "fintech",
-    "bancos",
-    "reclamos argentina",
-    "tu queja suma",
-    "RFA Argentina",
-    "consultoría legal financiera"
-  ]
-}
-
-<!-- 🧠 Datos estructurados para SEO -->
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "Organization",
-  "name": "Reclamos Financieros Argentina",
-  "alternateName": ["RFA", "RFA Argentina", "Reclamos Argentina", "TuQuejaSuma alternativa"],
-  "url": "https://rfargentina.com",
-  "logo": "https://rfargentina.com/img/rfa-logo.png",
-  "sameAs": [
-    "https://twitter.com/RFArgentina_",
-    "https://www.instagram.com/rfargentina/",
-    "https://www.facebook.com/reclamosfinancierosargentina"
-  ],
-  "description": "Consultoría financiera con alcance legal especializada en reclamos contra bancos, fintech, billeteras digitales y servicios financieros en Argentina.",
-  "foundingDate": "2024",
-  "contactPoint": [{
-    "@type": "ContactPoint",
-    "telephone": "+54 11 0000-0000",
-    "contactType": "Atención al cliente",
-    "areaServed": "AR",
-    "availableLanguage": ["Español"]
-  }],
-  "keywords": [
-    "reclamos financieros",
-    "reclamos bancarios",
-    "defensa del consumidor",
-    "reclamos fintech",
-    "billeteras digitales",
-    "reclamos Argentina",
-    "consultoría legal",
-    "tuquejasuma"
-  ]
-}
-</script>
-
-</script>
-
-  </head>
-
-
-  <body>
-    <noscript>Necesitás habilitar JavaScript para ejecutar esta app.</noscript>
-    <div id="root"></div>
-
-
-    <!-- 🔗 ENLACES INTERNOS SEO -->
-    <section id="enlaces-seo" style="display:none;">
-      <a href="/reclamos-financieros">Reclamos Financieros</a>
-      <a href="/reclamos-bancarios">Reclamos Bancarios</a>
-      <a href="/reclamos-tuquejasuma">Casos relacionados con Tu Queja Suma</a>
-      <a href="/reclamos-flow">Reclamos Flow</a>
-      <a href="/reclamos-telecom">Reclamos Telecom</a>
-      <a href="/reclamos-personal">Reclamos Personal</a>
-      <a href="/reclamos-mercado-pago">Reclamos Mercado Pago</a>
-      <a href="/reclamos-galicia">Reclamos Banco Galicia</a>
-      <a href="/reclamos-nacion">Reclamos Banco Nación</a>
-      <a href="/defensa-consumidor">Defensa del Consumidor</a>
-      <a href="/denuncias-colectivas">Denuncias Colectivas</a>
-      <a href="/consultoria-legal-financiera">Consultoría Legal y Financiera</a>
-    </section>
-
-
-    <!-- ⚙️ PALABRAS CLAVE ALTERNATIVAS INVISIBLES -->
-    <div style="display:none;">
-      RFA reclamos financieros argentina tu queja suma rfa consultoría legal argentina reclamos financieros online tuquejasuma reclamos legales hostigamiento cobro indebido deuda inexistente defensa consumidor asesoramiento financiero denuncias colectivas fintech billeteras digitales bancos argentinos
-    </div>
-    <!-- 🔗 Enlaces SEO internos -->
-<div style="display:none;">
-  <a href="https://rfargentina.com/reclamos-bancarios">Reclamos bancarios en Argentina</a>
-  <a href="https://rfargentina.com/reclamos-fintech">Reclamos fintech y billeteras digitales</a>
-  <a href="https://rfargentina.com/reclamos-tuquejasuma">Alternativa a TuQuejaSuma</a>
-  <a href="https://rfargentina.com/defensa-consumidor">Defensa del consumidor y reclamos legales</a>
-  <a href="https://rfargentina.com/consultoria-financiera">Consultoría financiera con alcance legal</a>
-</div>
-
-  </body>
-</html>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0f172a" />
+
+    <title>RFA - Reclamos Financieros Argentina | Gesti?n de Reclamos</title>
+    <meta
+      name="description"
+      content="RFA - Reclamos Financieros Argentina. Gesti?n de reclamos ante bancos, fintech y billeteras digitales. Servicio profesional con seguimiento real."
+    />
+
+    <meta
+      name="keywords"
+      content="RFA, Reclamos Financieros Argentina, reclamos financieros, defensa del consumidor, reclamos bancos, reclamos fintech, reclamos billeteras digitales, cobros indebidos, bloqueos de cuenta, consumos desconocidos, trato digno"
+    />
+    <meta name="author" content="Reclamos Financieros Argentina (RFA)" />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://rfargentina.com" />
+
+    <meta property="og:title" content="RFA - Reclamos Financieros Argentina" />
+    <meta property="og:description" content="Gesti?n de reclamos ante bancos, fintech y billeteras digitales. Servicio profesional con seguimiento real." />
+    <meta property="og:url" content="https://rfargentina.com" />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://rfargentina.com/rfa-logo.png" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="RFA - Reclamos Financieros Argentina" />
+    <meta name="twitter:description" content="Gesti?n de reclamos ante bancos, fintech y billeteras digitales. Servicio profesional con seguimiento real." />
+    <meta name="twitter:image" content="https://rfargentina.com/rfa-logo.png" />
+
+    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-ZR6DRJD7K9"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag() { dataLayer.push(arguments); }
+      gtag('js', new Date());
+      gtag('config', 'G-ZR6DRJD7K9');
+    </script>
+
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "name": "Reclamos Financieros Argentina",
+      "alternateName": ["RFA"],
+      "url": "https://rfargentina.com",
+      "logo": "https://rfargentina.com/rfa-logo.png",
+      "description": "Gesti?n de reclamos ante bancos, fintech y billeteras digitales. Servicio profesional con seguimiento real.",
+      "contactPoint": {
+        "@type": "ContactPoint",
+        "email": "soporte@rfargentina.com",
+        "contactType": "customer support",
+        "areaServed": "AR",
+        "availableLanguage": ["es"]
+      }
+    }
+    </script>
+  </head>
+
+
+  <body>
+    <noscript>Necesitás habilitar JavaScript para ejecutar esta app.</noscript>
+    <div id="root"></div>
+
+
+    <!-- 🔗 ENLACES INTERNOS SEO -->
+    <section id="enlaces-seo" style="display:none;">
+      <a href="/reclamos-financieros">Reclamos Financieros</a>
+      <a href="/reclamos-bancarios">Reclamos Bancarios</a>
+      <a href="/reclamos-tuquejasuma">Casos relacionados con Tu Queja Suma</a>
+      <a href="/reclamos-flow">Reclamos Flow</a>
+      <a href="/reclamos-telecom">Reclamos Telecom</a>
+      <a href="/reclamos-personal">Reclamos Personal</a>
+      <a href="/reclamos-mercado-pago">Reclamos Mercado Pago</a>
+      <a href="/reclamos-galicia">Reclamos Banco Galicia</a>
+      <a href="/reclamos-nacion">Reclamos Banco Nación</a>
+      <a href="/defensa-consumidor">Defensa del Consumidor</a>
+      <a href="/denuncias-colectivas">Denuncias Colectivas</a>
+      <a href="/consultoria-legal-financiera">Consultoría Legal y Financiera</a>
+    </section>
+
+
+    <!-- ⚙️ PALABRAS CLAVE ALTERNATIVAS INVISIBLES -->
+    <div style="display:none;">
+      RFA reclamos financieros argentina tu queja suma rfa consultoría legal argentina reclamos financieros online tuquejasuma reclamos legales hostigamiento cobro indebido deuda inexistente defensa consumidor asesoramiento financiero denuncias colectivas fintech billeteras digitales bancos argentinos
+    </div>
+    <!-- 🔗 Enlaces SEO internos -->
+<div style="display:none;">
+  <a href="https://rfargentina.com/reclamos-bancarios">Reclamos bancarios en Argentina</a>
+  <a href="https://rfargentina.com/reclamos-fintech">Reclamos fintech y billeteras digitales</a>
+  <a href="https://rfargentina.com/reclamos-tuquejasuma">Alternativa a TuQuejaSuma</a>
+  <a href="https://rfargentina.com/defensa-consumidor">Defensa del consumidor y reclamos legales</a>
+  <a href="https://rfargentina.com/consultoria-financiera">Consultoría financiera con alcance legal</a>
+</div>
+
+  </body>
+</html>

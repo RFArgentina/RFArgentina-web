@@ -14,7 +14,17 @@ const RFALanding = () => {
     navigate(isAuthenticated ? "/panel" : "/login");
   };
  
-  const [news, setNews] = useState([]);
+  
+  const handleServiceOptionsClick = () => {
+    const el = document.getElementById("modalidades");
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    navigate(isAuthenticated ? "/panel" : "/registro");
+  };
+
+const [news, setNews] = useState([]);
   const [newsLoading, setNewsLoading] = useState(true);
   const [newsError, setNewsError] = useState(false);
 
@@ -44,7 +54,7 @@ const RFALanding = () => {
     {
       icon: <Gavel className="w-10 h-10 text-emerald-300" />,
       title: 'Carpeta lista',
-      description: 'Entregamos una carpeta profesional para estudios jurídicos aliados.',
+      description: 'Entregamos una carpeta profesional lista para presentar ante la entidad o para tu asesor legal.',
     },
   ];
 
@@ -58,19 +68,19 @@ const services = [
     features: [
     'Revisión y clasificación de la información',
     'Estructuración del caso según el tipo de reclamo',
-    'Elaboración de carpeta profesional lista para presentar ante estudios aliados' ,
+    'Elaboración de carpeta profesional lista para presentar ante la entidad o para tu asesor legal',
     'Optimización del expediente para una gestión más ágil',
     ],
   },
  {
-  title: 'Gestion integral del reclamo',
+  title: 'Gestión de reclamos ante entidades',
   description:
-    'Si tu caso es viable, podemos tomar la gestion administrativa completa del reclamo ante la entidad correspondiente, con seguimiento y comunicacion en cada etapa.',
+    'Si tu caso es viable, podemos tomar la gestión administrativa completa del reclamo ante la entidad correspondiente, con seguimiento y comunicación en cada etapa.',
   features: [
-    'Presentacion formal ante banco, fintech u otra entidad',
-    'Pedido de revision y reajuste en casos de deuda o cargos discutidos',
+    'Presentación formal ante banco, fintech u otra entidad',
+    'Pedido de revisión y reajuste en casos de deuda o cargos discutidos',
     'Seguimiento de respuestas y plazos para evitar demoras',
-    'Comunicacion clara para que siempre sepas en que estado esta tu caso',
+    'Comunicación clara para que siempre sepas en qué estado está tu caso',
   ],
 },
 
@@ -78,6 +88,44 @@ const services = [
 
 
   // ---- Planes ----
+  const faqs = [
+    {
+      q: "¿Qué incluye la gestión de reclamos ante entidades?",
+      a: "Relevamiento del caso, armado y redacción del reclamo, presentación por canales formales y seguimiento hasta agotar vías administrativas, según el plan."
+    },
+    {
+      q: "¿Necesito un abogado para empezar?",
+      a: "No. Podés iniciar con RFA. Si el caso requiere instancia judicial, no brindamos patrocinio; te dejamos la carpeta y comunicaciones disponibles para continuar con tu abogado."
+    },
+    {
+      q: "¿Qué documentación necesito para avanzar más rápido?",
+      a: "Comprobantes, capturas, resúmenes, contratos o términos vigentes, mails/chats con la entidad y cualquier número de operación. Si falta algo, te indicamos qué pedir y cómo."
+    },
+    {
+      q: "¿Cómo me informan avances?",
+      a: "Vas a ver el estado en tu panel y, cuando corresponde, dejamos registro de las comunicaciones y actualizaciones del caso."
+    },
+    {
+      q: "¿El análisis inicial tiene costo?",
+      a: "No. El primer contacto y el análisis inicial del caso son sin cargo. Si el reclamo es viable, te proponemos el plan adecuado."
+    },
+    {
+      q: "¿Puedo pagar en cuotas?",
+      a: "Sí. En planes con gestión, podemos coordinar pago en dos cuotas dentro del período de soporte del plan."
+    },
+    {
+      q: "¿Qué es el servicio para empresas?",
+      a: "Ordenamos reclamos de alto volumen y los transformamos en casos claros y operativos para tu gestión interna: estructuración, clasificación por estado/prioridad y orden documental."
+    },
+    {
+      q: "¿Cómo trabajamos con empresas y qué acceso tienen?",
+      a: "Recibimos los casos (por lote), los cargamos y habilitamos un usuario de empresa con panel interno para consultar y actualizar estado/prioridad. No gestionamos al cliente final salvo acuerdo específico."
+    },
+    {
+      q: "¿Cómo manejan la confidencialidad y la eliminación de datos?",
+      a: "Aplicamos acceso por roles y minimización de datos. En particulares eliminamos casos cerrados en un plazo máximo de 90 días. En empresas, la retención puede configurarse (manual o purga automática 30/60/90 días)."
+    }
+  ];
 
   // ----------------------------------------------------------------
   // Render
@@ -103,8 +151,8 @@ const services = [
               </h1>
 
               <p className="text-lg md:text-2xl text-slate-200 mb-8 leading-relaxed">
-                Convertimos tu reclamo en un caso sólido, claro y listo para avanzar.
-                Atendemos de forma 100% online con un proceso transparente.
+                Gestionamos reclamos administrativos ante bancos, billeteras virtuales, tarjetas y otras entidades.
+                Redactamos, presentamos y hacemos seguimiento con respaldo y comunicación clara.
               </p>
               <div className="flex flex-wrap gap-3 mb-8">
                 {["100% online", "Proceso guiado", "Confidencialidad", "Equipo experto"].map((item) => (
@@ -122,9 +170,9 @@ const services = [
                 </Button>
                 <Button
                   className="bg-white/10 hover:bg-white/20 text-white font-semibold py-3 px-6 rounded-lg border border-white/20"
-                  onClick={() => navigate(isAuthenticated ? "/panel" : "/registro")}
+                  onClick={handleServiceOptionsClick}
                 >
-                  Ver planes
+                  Ver opciones de servicio
                 </Button>
                 <Button
                   className="bg-white/10 hover:bg-white/20 text-white font-semibold py-3 px-6 rounded-lg border border-white/20"
@@ -137,23 +185,69 @@ const services = [
             <div className="rfa-sheen rounded-2xl p-8">
               <div className="flex items-center gap-3 mb-4">
                 <Shield className="w-6 h-6 text-emerald-300" />
-                <p className="text-lg font-semibold text-slate-100">Tu reclamo, listo para accionar</p>
+                <p className="text-lg font-semibold text-slate-100">Dos modalidades, un mismo objetivo</p>
               </div>
               <p className="text-slate-200 mb-6">
-                Organizamos evidencia, redactamos la presentación y dejamos todo listo para que un estudio aliado avance
-                sin demoras.
+                Según tu necesidad, podés delegar la gestión administrativa completa del reclamo o pedir una carpeta profesional
+                lista para presentar por tu cuenta.
               </p>
-              <ul className="space-y-3 text-sm text-slate-200">
-                {["Documentación ordenada", "Presentación profesional", "Seguimiento claro del estado"].map((item) => (
-                  <li key={item} className="flex items-start gap-3">
-                    <CheckCircle className="w-4 h-4 text-emerald-300 mt-0.5" />
-                    <span>{item}</span>
-                  </li>
-                ))}
-              </ul>
+              <div className="grid gap-3">
+                <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                  <p className="text-sm font-semibold text-slate-100">Gestión de reclamos ante entidades</p>
+                  <p className="text-xs text-slate-300 mt-1">
+                    Redacción + presentación + seguimiento ante la entidad, con registro de comunicaciones.
+                  </p>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                  <p className="text-sm font-semibold text-slate-100">Carpeta profesional</p>
+                  <p className="text-xs text-slate-300 mt-1">
+                    Documentacion ordenada y reclamo redactado para que lo presentes por tu cuenta o con tu abogado.
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
         </section>
+
+        {/* ================= MODALIDADES ================= */}
+        <section id="modalidades" className="py-10 px-6">
+          <div className="max-w-6xl mx-auto grid md:grid-cols-2 gap-6">
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-6 backdrop-blur-sm">
+              <p className="text-xs uppercase tracking-[0.3em] text-emerald-300 font-semibold mb-3">Servicio principal</p>
+              <h2 className="text-2xl md:text-3xl font-bold text-slate-100">Gestión de reclamos ante entidades</h2>
+              <p className="text-slate-300 mt-3 leading-relaxed">
+                Nos ocupamos del reclamo administrativo: armamos el caso, presentamos formalmente y damos seguimiento hasta obtener
+                agotar vías administrativas, según el plan.
+              </p>
+              <div className="mt-5">
+                <Button
+                  className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold py-3 px-6 rounded-lg shadow-md transition"
+                  onClick={handleCTAClick}
+                >
+                  Iniciar reclamo sin costo
+                </Button>
+              </div>
+            </div>
+
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-6 backdrop-blur-sm">
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-300 font-semibold mb-3">Alternativa</p>
+              <h2 className="text-2xl md:text-3xl font-bold text-slate-100">Carpeta profesional (para gestionar por tu cuenta)</h2>
+              <p className="text-slate-300 mt-3 leading-relaxed">
+                Si preferís avanzar por tu cuenta, organizamos pruebas, redactamos el reclamo y te entregamos un informe claro para
+                presentar ante la entidad o tu abogado.
+              </p>
+              <div className="mt-5 flex flex-wrap gap-3">
+                <Button
+                  className="bg-white/10 hover:bg-white/20 text-white font-semibold py-3 px-6 rounded-lg border border-white/20"
+                  onClick={() => navigate(isAuthenticated ? "/panel" : "/registro")}
+                >
+                  Ver planes
+                </Button>
+              </div>
+            </div>
+          </div>
+        </section>
+
  
       {/* ================= QUI?NES SOMOS ================= */}
 <section className="py-20 px-6 bg-white/5 backdrop-blur-sm">
@@ -222,7 +316,7 @@ const services = [
         <strong className="text-emerald-300">RFA</strong> es una consultoría
         especializada en reclamos financieros. Ayudamos a usuarios y empresas
         a transformar sus quejas en casos sólidos, claros y listos para ser
-        presentados ante estudios jurídicos aliados.
+        presentados ante la entidad correspondiente, con un proceso claro y documentado.
       </p>
       <ul className="space-y-3">
         {[
@@ -295,53 +389,53 @@ const services = [
           <div className="max-w-6xl mx-auto">
             <div className="text-center mb-12">
               <p className="text-emerald-300 uppercase tracking-[0.22em] text-sm md:text-base font-extrabold mb-4">
-                Gestion de Reclamos ante Entidades
+                Gestión de Reclamos ante Entidades
               </p>
               <h2 className="text-3xl md:text-4xl font-bold text-slate-100 mb-4">
                 Defendemos tus derechos como usuario financiero
               </h2>
               <p className="text-slate-300 max-w-4xl mx-auto">
-                En RFA te acompanamos de forma profesional en la gestion completa de reclamos administrativos contra bancos,
-                billeteras virtuales, tarjetas de credito y otras entidades del sistema financiero que hayan actuado con abuso,
-                desinformacion o incumplimiento.
+                En RFA te acompañamos de forma profesional en la gestión completa de reclamos administrativos contra bancos,
+                billeteras virtuales, tarjetas de crédito y otras entidades del sistema financiero que hayan actuado con abuso,
+                desinformación o incumplimiento.
               </p>
               <p className="text-slate-300 max-w-4xl mx-auto mt-4">
                 Nos ocupamos de redactar, presentar y hacer el seguimiento del reclamo formal ante la entidad correspondiente,
-                exigiendo una respuesta fundada y justa en base al caso concreto, hasta agotar vias administrativas.
+                exigiendo una respuesta fundada y justa en base al caso concreto, hasta agotar vías administrativas.
               </p>
             </div>
 
-            <div className="bg-white/5 border border-white/10 rounded-2xl p-6 mb-6">
-              <h3 className="text-xl font-semibold text-emerald-300 mb-4">Cuando aplica este servicio</h3>
-              <p className="text-slate-300 mb-4">Casos en los que la entidad:</p>
-              <ul className="space-y-2 text-slate-200">
-                <li className="flex items-start gap-2"><CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />Cobro comisiones, debitos o intereses abusivos.</li>
-                <li className="flex items-start gap-2"><CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />Suspendio cuentas o retuvo fondos sin explicacion.</li>
-                <li className="flex items-start gap-2"><CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />Rechazo refinanciaciones razonables.</li>
-                <li className="flex items-start gap-2"><CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />No entrego informacion clara ni contratos escritos.</li>
-                <li className="flex items-start gap-2"><CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />Omitio respuesta a reclamos anteriores.</li>
-                <li className="flex items-start gap-2"><CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />Desconocio pagos, transferencias o reintegros.</li>
-                <li className="flex items-start gap-2"><CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />Vulnero tu derecho a trato digno o atencion personalizada.</li>
-              </ul>
-            </div>
-
-            <div className="grid md:grid-cols-2 gap-6">
-              <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
-                <h3 className="text-xl font-semibold text-emerald-300 mb-4">Que hacemos por vos</h3>
-                <ul className="space-y-3 text-slate-200">
-                  <li className="flex items-start gap-2"><Shield className="w-5 h-5 text-emerald-400 mt-0.5" />Relevamos tu situacion: analizamos tu caso, documentacion y antecedentes.</li>
-                  <li className="flex items-start gap-2"><Shield className="w-5 h-5 text-emerald-400 mt-0.5" />Armamos tu reclamo profesional: con hechos, pruebas y fundamentos juridicos claros.</li>
-                  <li className="flex items-start gap-2"><Shield className="w-5 h-5 text-emerald-400 mt-0.5" />Presentamos a la entidad: por canales formales (email, formulario web, defensa del consumidor, etc.).</li>
-                  <li className="flex items-start gap-2"><Shield className="w-5 h-5 text-emerald-400 mt-0.5" />Hacemos seguimiento real: controlamos plazos, respuestas y exigimos resoluciones fundadas.</li>
-                  <li className="flex items-start gap-2"><Shield className="w-5 h-5 text-emerald-400 mt-0.5" />Te mantenemos informado: sin vueltas, con claridad y tiempos razonables.</li>
-                  <li className="flex items-start gap-2"><Shield className="w-5 h-5 text-emerald-400 mt-0.5" />Dejamos a disposicion, cuando lo solicites, las comunicaciones entre RFA y la entidad como prueba para escalar el caso o para tu control.</li>
-                  <li className="flex items-start gap-2"><Shield className="w-5 h-5 text-emerald-400 mt-0.5" />El servicio se sostiene con gestion activa y seguimiento hasta agotar vias administrativas.</li>
+            <div className="grid lg:grid-cols-3 gap-6">
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-6 h-full">
+                <h3 className="text-xl font-semibold text-emerald-300 mb-3">Cuándo aplica este servicio</h3>
+                <p className="text-slate-300 mb-3">Casos en los que la entidad:</p>
+                <ul className="space-y-2 text-slate-200 text-sm">
+                  <li className="flex items-start gap-2"><CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />Cobró comisiones, débitos o intereses abusivos.</li>
+                  <li className="flex items-start gap-2"><CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />Suspendió cuentas o retuvo fondos sin explicación.</li>
+                  <li className="flex items-start gap-2"><CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />Rechazó refinanciaciones razonables.</li>
+                  <li className="flex items-start gap-2"><CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />No entregó información clara ni contratos escritos.</li>
+                  <li className="flex items-start gap-2"><CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />Omitió respuesta a reclamos anteriores.</li>
+                  <li className="flex items-start gap-2"><CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />Desconoció pagos, transferencias o reintegros.</li>
+                  <li className="flex items-start gap-2"><CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />Vulneró tu derecho a trato digno o atención personalizada.</li>
                 </ul>
               </div>
 
-              <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
-                <h3 className="text-xl font-semibold text-emerald-300 mb-4">Que no hacemos</h3>
-                <ul className="space-y-3 text-slate-200">
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-6 h-full">
+                <h3 className="text-xl font-semibold text-emerald-300 mb-3">Qué hacemos por vos</h3>
+                <ul className="space-y-2 text-slate-200 text-sm">
+                  <li className="flex items-start gap-2"><Shield className="w-5 h-5 text-emerald-400 mt-0.5" />Relevamos tu situación: analizamos tu caso, documentación y antecedentes.</li>
+                  <li className="flex items-start gap-2"><Shield className="w-5 h-5 text-emerald-400 mt-0.5" />Armamos tu reclamo profesional: con hechos, pruebas y fundamentos jurídicos claros.</li>
+                  <li className="flex items-start gap-2"><Shield className="w-5 h-5 text-emerald-400 mt-0.5" />Presentamos a la entidad por canales formales.</li>
+                  <li className="flex items-start gap-2"><Shield className="w-5 h-5 text-emerald-400 mt-0.5" />Hacemos seguimiento real: controlamos plazos y respuestas.</li>
+                  <li className="flex items-start gap-2"><Shield className="w-5 h-5 text-emerald-400 mt-0.5" />Te mantenemos informado con claridad.</li>
+                  <li className="flex items-start gap-2"><Shield className="w-5 h-5 text-emerald-400 mt-0.5" />A pedido, dejamos las comunicaciones RFA-entidad disponibles como respaldo.</li>
+                  <li className="flex items-start gap-2"><Shield className="w-5 h-5 text-emerald-400 mt-0.5" />Seguimiento activo hasta agotar vías administrativas.</li>
+                </ul>
+              </div>
+
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-6 h-full">
+                <h3 className="text-xl font-semibold text-emerald-300 mb-3">Que no hacemos</h3>
+                <ul className="space-y-2 text-slate-200 text-sm">
                   <li className="flex items-start gap-2"><Gavel className="w-5 h-5 text-emerald-400 mt-0.5" />No ejercemos representacion legal ni patrocinio judicial.</li>
                   <li className="flex items-start gap-2"><Gavel className="w-5 h-5 text-emerald-400 mt-0.5" />No intervenimos en mediaciones oficiales o juicios (aunque te preparamos la carpeta para que puedas hacerlo con tu abogado).</li>
                 </ul>
@@ -368,105 +462,33 @@ const services = [
           </div>
         </section>
 
-{/* ================= PREGUNTAS FRECUENTES ================= */}
-<section className="py-20 px-6 bg-white/5 backdrop-blur-sm">
-  <div className="text-center mb-16">
-    <h2 className="text-3xl md:text-4xl font-bold text-emerald-300 mb-6">
-      Preguntas Frecuentes
-    </h2>
-    <p className="text-lg text-slate-300 max-w-2xl mx-auto">
-      Respondemos lo más importante sobre nuestra institución y metodología.
-    </p>
-  </div>
+        {/* ================= PREGUNTAS FRECUENTES ================= */}
+        <section className="py-20 px-6 bg-white/5 backdrop-blur-sm">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl md:text-4xl font-bold text-emerald-300 mb-6">Preguntas Frecuentes</h2>
+            <p className="text-lg text-slate-300 max-w-2xl mx-auto">
+              Respuestas claras sobre la gestión de reclamos y el servicio para empresas.
+            </p>
+          </div>
 
-  <div className="max-w-4xl mx-auto space-y-10">
-    <div>
-      <h3 className="text-2xl font-semibold text-emerald-300 mb-2">
-        ¿Quiénes somos en RFA
-      </h3>
-      <p className="text-slate-300">
-        Somos una consultora especializada en reclamos financieros.
-        Te ayudamos a ordenar tu reclamo y dejarlo listo para que los abogados aliados puedan avanzar rápidamente.
-      </p>
-    </div>
+          <div className="max-w-4xl mx-auto space-y-4">
+            {faqs.map((item) => (
+              <div key={item.q} className="bg-white/5 border border-white/10 rounded-2xl p-6">
+                <h3 className="text-xl font-semibold text-emerald-300 mb-2">{item.q}</h3>
+                <p className="text-slate-300 leading-relaxed">{item.a}</p>
+              </div>
+            ))}
 
-    <div>
-      <h3 className="text-2xl font-semibold text-emerald-300 mb-2">
-        ¿Qué tipo de problemas atendemos
-      </h3>
-      <p className="text-slate-300">
-        Trabajamos con reclamos contra bancos, billeteras virtuales, plataformas de inversión y casas de apuestas legales.
-        También atendemos conflictos de consumo y financieros en general.
-      </p>
-    </div>
-
-    <div>
-      <h3 className="text-2xl font-semibold text-emerald-300 mb-2">
-        ¿Necesito un abogado para empezar el reclamo
-      </h3>
-      <p className="text-slate-300">
-        No. Iniciás el proceso con RFA: organizamos tu reclamo y armamos la carpeta profesional.
-        Si hace falta, luego lo derivamos a un estudio jurídico aliado.
-      </p>
-    </div>
-
-    <div>
-      <h3 className="text-2xl font-semibold text-emerald-300 mb-2">
-        ¿Cómo es el proceso de trabajo
-      </h3>
-      <p className="text-slate-300 leading-relaxed">
-        1. Cargás tu reclamo en el formulario.<br />
-        2. Organizamos la documentación y pruebas.<br />
-        3. Entregamos una carpeta profesional lista para presentar.
-      </p>
-    </div>
-
-    <div>
-      <h3 className="text-2xl font-semibold text-emerald-300 mb-2">
-        ¿Dónde trabajan y cómo me comunico
-      </h3>
-      
-      <p className="text-slate-300">
-        Atendemos en todo el país de manera 100% online.
-        Podés contactarnos por WhatsApp, correo electrónico o redes sociales en cualquier momento.
-      </p>
-      <div className="mt-10">
-  <h3 className="text-2xl font-semibold text-emerald-300 mb-2">
-    ¿Puedo abonar mi plan en cuotas
-  </h3>
-  <p className="text-slate-300 leading-relaxed">
-    Sí. A partir de <strong>Plan Gestion Basica</strong>, los pagos pueden realizarse en 
-    <strong> dos cuotas sin interés</strong>, abonadas dentro del período de soporte 
-    establecido para cada plan.
-  </p>
-</div>
-<div className="mt-10">
-  <h3 className="text-2xl font-semibold text-emerald-300 mb-2">
-    ¿El primer contacto y análisis del caso tiene costo
-  </h3>
-  <p className="text-slate-300 leading-relaxed">
-    No. El <strong>primer contacto y el análisis inicial de tu caso son totalmente gratuitos</strong>. 
-    En <strong>Reclamos Financieros Argentina (RFA)</strong> evaluamos cada situación sin compromiso 
-    y solo si el reclamo es viable, te ofrecemos las opciones de seguimiento o documentación profesional 
-    según corresponda.
-  </p>
-</div>
-
-
-    </div>
-    <div className="text-center mt-16">
-      
-  <Button
-    onClick={() => navigate(isAuthenticated ? "/panel" : "/login")}
-    className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold py-3 px-6 rounded-lg shadow-md transition"
-  >
-    Cargar mi caso sin cargo
-  </Button>
-</div>
-
-  </div>
-</section>
-
+            <div className="text-center mt-10">
+              <Button
+                onClick={handleCTAClick}
+                className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold py-3 px-6 rounded-lg shadow-md transition"
+              >
+                Iniciar reclamo sin costo
+              </Button>
+            </div>
+          </div>
+        </section>
 
         {/* ================= FOOTER ================= */}
         <footer id="contacto" className="bg-slate-950/80 py-12 px-6 text-slate-300 text-center md:text-left">
@@ -514,6 +536,17 @@ const services = [
                 </a>
 
 
+              </div>
+              <div className="mt-4 space-y-1 text-sm">
+                <button className="block hover:text-emerald-300 transition" onClick={() => navigate("/terminos")}>
+                  Terminos y Condiciones
+                </button>
+                <button className="block hover:text-emerald-300 transition" onClick={() => navigate("/privacidad")}>
+                  Politica de Privacidad
+                </button>
+                <button className="block hover:text-emerald-300 transition" onClick={() => navigate("/cookies")}>
+                  Politica de Cookies
+                </button>
               </div>
             </div>
           </div>

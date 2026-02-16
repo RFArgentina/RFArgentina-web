@@ -39,7 +39,25 @@ const SQLITE_PATH = process.env.SQLITE_PATH || "./rfa.db";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = path.resolve(__dirname, SQLITE_PATH);
 const UPLOADS_DIR = path.resolve(__dirname, "uploads");
-const TRUST_PROXY = String(process.env.TRUST_PROXY || "false").toLowerCase() === "true";
+const TRUST_PROXY_RAW = String(process.env.TRUST_PROXY ?? "false").trim().toLowerCase();
+const TRUST_PROXY = (() => {
+  if (!TRUST_PROXY_RAW || TRUST_PROXY_RAW === "false" || TRUST_PROXY_RAW === "0" || TRUST_PROXY_RAW === "off") {
+    return false;
+  }
+  if (TRUST_PROXY_RAW === "true") {
+    // "true" es demasiado permisivo para express-rate-limit; limitar a un proxy.
+    return 1;
+  }
+  if (/^\d+$/.test(TRUST_PROXY_RAW)) {
+    return Number(TRUST_PROXY_RAW);
+  }
+  if (["loopback", "linklocal", "uniquelocal"].includes(TRUST_PROXY_RAW)) {
+    return TRUST_PROXY_RAW;
+  }
+  // fallback seguro para despliegues tipicos detras de un solo proxy
+  return 1;
+})();
+const TRUST_PROXY_ENABLED = TRUST_PROXY !== false;
 const LOGIN_MAX_ATTEMPTS = Number(process.env.LOGIN_MAX_ATTEMPTS || 8);
 const LOGIN_LOCK_MS = Number(process.env.LOGIN_LOCK_MINUTES || 15) * 60 * 1000;
 const ACCESS_TOKEN_TTL = process.env.ACCESS_TOKEN_TTL || "15m";
@@ -48,6 +66,9 @@ const REFRESH_TOKEN_COOKIE = process.env.REFRESH_TOKEN_COOKIE || "rfa_refresh_to
 const CSRF_COOKIE_NAME = process.env.CSRF_COOKIE_NAME || "rfa_csrf_token";
 const REFRESH_TOKEN_SECURE_COOKIE = String(process.env.REFRESH_TOKEN_SECURE_COOKIE || "false").toLowerCase() === "true";
 const REFRESH_TOKEN_SAME_SITE = process.env.REFRESH_TOKEN_SAME_SITE || "lax";
+const USER_RETENTION_DAYS = Number(process.env.USER_RETENTION_DAYS || 90);
+const DATA_PURGE_INTERVAL_HOURS = Number(process.env.DATA_PURGE_INTERVAL_HOURS || 24);
+const DB_FLUSH_INTERVAL_MS = Number(process.env.DB_FLUSH_INTERVAL_MS || 1500);
 
 if (!JWT_SECRET || JWT_SECRET.length < 32) {
   throw new Error("JWT_SECRET debe estar configurado con al menos 32 caracteres");
@@ -63,6 +84,25 @@ const appBaseOrigin = (() => {
 const allowedOrigins = CORS_ORIGINS.length
   ? CORS_ORIGINS
   : [appBaseOrigin, "http://localhost:3000", "http://127.0.0.1:3000"].filter(Boolean);
+
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  if (allowedOrigins.includes(origin)) return true;
+  try {
+    const parsed = new URL(origin);
+    const host = parsed.hostname.toLowerCase();
+    const protocol = parsed.protocol.toLowerCase();
+    if ((host === "localhost" || host === "127.0.0.1") && ["http:", "https:"].includes(protocol)) {
+      return true;
+    }
+    if ((host === "rfargentina.com" || host === "www.rfargentina.com") && ["http:", "https:"].includes(protocol)) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
 
 function isLocalOrigin(origin) {
   const value = String(origin || "").toLowerCase();
@@ -86,6 +126,18 @@ function validateRuntimeSecurityConfig() {
     issues.push("AUTH_REQUIRE_EMAIL_VERIFICATION=true requiere SENDGRID_API_KEY y EMAIL_FROM");
   }
 
+  if (!Number.isFinite(USER_RETENTION_DAYS) || USER_RETENTION_DAYS < 30 || USER_RETENTION_DAYS > 365) {
+    issues.push("USER_RETENTION_DAYS debe estar entre 30 y 365");
+  }
+
+  if (!Number.isFinite(DATA_PURGE_INTERVAL_HOURS) || DATA_PURGE_INTERVAL_HOURS < 1 || DATA_PURGE_INTERVAL_HOURS > 168) {
+    issues.push("DATA_PURGE_INTERVAL_HOURS debe estar entre 1 y 168");
+  }
+
+  if (!Number.isFinite(DB_FLUSH_INTERVAL_MS) || DB_FLUSH_INTERVAL_MS < 100 || DB_FLUSH_INTERVAL_MS > 60000) {
+    issues.push("DB_FLUSH_INTERVAL_MS debe estar entre 100 y 60000");
+  }
+
   if (IS_PROD) {
     if (!REFRESH_TOKEN_SECURE_COOKIE) {
       issues.push("En produccion REFRESH_TOKEN_SECURE_COOKIE debe ser true");
@@ -99,7 +151,7 @@ function validateRuntimeSecurityConfig() {
     if (allowedOrigins.some(isLocalOrigin)) {
       issues.push("En produccion CORS_ORIGINS no debe incluir localhost/127.0.0.1");
     }
-    if (!TRUST_PROXY) {
+    if (!TRUST_PROXY_ENABLED) {
       warnings.push("TRUST_PROXY=false en produccion; revisar si usas reverse proxy");
     }
   }
@@ -148,8 +200,7 @@ const publicFormLimiter = rateLimit({
 
 app.use(cors({
   origin(origin, cb) {
-    if (!origin) return cb(null, true);
-    if (allowedOrigins.includes(origin)) return cb(null, true);
+    if (isAllowedOrigin(origin)) return cb(null, true);
     return cb(new Error("Origen no permitido por CORS"));
   },
   credentials: true,
@@ -182,6 +233,8 @@ app.use((req, res, next) => {
 });
 
 let db = null;
+let server = null;
+let shuttingDown = false;
 
 if (SENDGRID_API_KEY) {
   sgMail.setApiKey(SENDGRID_API_KEY);
@@ -218,14 +271,85 @@ function maybeUpload(req, res, next) {
 function persistDb() {
   if (!db) return;
   const data = db.export();
-  fs.writeFileSync(DB_PATH, Buffer.from(data));
+  const tmpPath = `${DB_PATH}.tmp`;
+  const bakPath = `${DB_PATH}.bak`;
+
+  // Escritura atómica (aprox) en Windows:
+  // 1) write tmp
+  // 2) si existe DB, renombrar a .bak
+  // 3) renombrar tmp a DB
+  // 4) eliminar .bak
+  fs.writeFileSync(tmpPath, Buffer.from(data));
+  if (fs.existsSync(DB_PATH)) {
+    try {
+      if (fs.existsSync(bakPath)) fs.unlinkSync(bakPath);
+    } catch (_e) {
+      // noop
+    }
+    try {
+      fs.renameSync(DB_PATH, bakPath);
+    } catch (_e) {
+      // Si no se puede renombrar, intentamos sobreescritura directa (menos seguro, pero evita caida)
+      fs.writeFileSync(DB_PATH, Buffer.from(data));
+      try { fs.unlinkSync(tmpPath); } catch (_e2) {}
+      return;
+    }
+  }
+
+  try {
+    fs.renameSync(tmpPath, DB_PATH);
+  } catch (_e) {
+    // Fallback: restaurar bak si existe
+    try {
+      if (fs.existsSync(bakPath) && !fs.existsSync(DB_PATH)) {
+        fs.renameSync(bakPath, DB_PATH);
+      }
+    } catch (_e2) {
+      // noop
+    }
+    throw _e;
+  }
+
+  try {
+    if (fs.existsSync(bakPath)) fs.unlinkSync(bakPath);
+  } catch (_e) {
+    // noop
+  }
+}
+
+let dbDirty = false;
+let flushTimer = null;
+let flushing = false;
+
+function schedulePersistDb() {
+  if (shuttingDown) return;
+  dbDirty = true;
+  if (flushTimer) return;
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    flushPersistDb();
+  }, DB_FLUSH_INTERVAL_MS);
+}
+
+function flushPersistDb() {
+  if (!db || !dbDirty) return;
+  if (flushing) return;
+  flushing = true;
+  try {
+    persistDb();
+    dbDirty = false;
+  } catch (err) {
+    console.error("DB FLUSH ERR:", err.message);
+  } finally {
+    flushing = false;
+  }
 }
 
 function run(sql, params = []) {
   const stmt = db.prepare(sql);
   stmt.run(params);
   stmt.free();
-  persistDb();
+  schedulePersistDb();
 }
 
 function get(sql, params = []) {
@@ -291,6 +415,16 @@ function initDb() {
       volumen TEXT NOT NULL,
       comentarios TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS enterprise_retention_settings (
+      enterprise_user_id TEXT PRIMARY KEY,
+      retention_mode TEXT NOT NULL DEFAULT 'manual',
+      retention_days INTEGER,
+      updated_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(enterprise_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY(updated_by) REFERENCES users(id) ON DELETE SET NULL
     );
     CREATE TABLE IF NOT EXISTS auth_login_audit (
       id TEXT PRIMARY KEY,
@@ -379,6 +513,30 @@ function initDb() {
   addUserColumn("email_verified", "INTEGER DEFAULT 0");
   addUserColumn("verification_token", "TEXT");
   addUserColumn("verification_sent_at", "TEXT");
+  const enterpriseRetentionColumns = all("PRAGMA table_info(enterprise_retention_settings)").map((c) => c.name);
+  if (!enterpriseRetentionColumns.includes("updated_at")) {
+    db.exec("ALTER TABLE enterprise_retention_settings ADD COLUMN updated_at TEXT;");
+  }
+  run(
+    `UPDATE enterprise_retention_settings
+     SET retention_mode = 'manual', retention_days = NULL
+     WHERE retention_mode NOT IN ('manual', 'auto')`
+  );
+  run(
+    `UPDATE enterprise_retention_settings
+     SET retention_days = NULL
+     WHERE retention_mode = 'manual'`
+  );
+  run(
+    `UPDATE enterprise_retention_settings
+     SET retention_days = 90
+     WHERE retention_mode = 'auto' AND (retention_days IS NULL OR retention_days NOT IN (30, 60, 90))`
+  );
+  run(
+    `UPDATE enterprise_retention_settings
+     SET updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)
+     WHERE updated_at IS NULL OR TRIM(updated_at) = ''`
+  );
   run("UPDATE users SET email_verified = 1 WHERE email_verified IS NULL");
   run("DELETE FROM refresh_tokens WHERE expires_at <= CURRENT_TIMESTAMP OR revoked_at IS NOT NULL");
   persistDb();
@@ -416,6 +574,119 @@ function normalizeCompareText(value) {
     .toLowerCase()
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function normalizeEnterpriseRetentionInput(payload = {}) {
+  const mode = String(payload.retention_mode || "").trim().toLowerCase();
+  if (!["manual", "auto"].includes(mode)) {
+    return { ok: false, error: "retention_mode invalido. Usa manual o auto" };
+  }
+  if (mode === "manual") {
+    return { ok: true, mode: "manual", days: null };
+  }
+  const daysRaw = typeof payload.retention_days === "number"
+    ? payload.retention_days
+    : Number(String(payload.retention_days || "").trim());
+  if (![30, 60, 90].includes(daysRaw)) {
+    return { ok: false, error: "retention_days invalido. Usa 30, 60 o 90" };
+  }
+  return { ok: true, mode: "auto", days: daysRaw };
+}
+
+function getEnterpriseRetentionSettings(enterpriseUserId) {
+  const row = get(
+    `SELECT enterprise_user_id, retention_mode, retention_days, updated_at
+     FROM enterprise_retention_settings
+     WHERE enterprise_user_id = ?`,
+    [enterpriseUserId]
+  );
+  if (!row) {
+    return {
+      enterprise_user_id: enterpriseUserId,
+      retention_mode: "manual",
+      retention_days: null,
+      updated_at: null
+    };
+  }
+  const mode = row.retention_mode === "auto" ? "auto" : "manual";
+  const days = mode === "auto" && [30, 60, 90].includes(Number(row.retention_days))
+    ? Number(row.retention_days)
+    : null;
+  return {
+    enterprise_user_id: enterpriseUserId,
+    retention_mode: mode,
+    retention_days: days,
+    updated_at: row.updated_at || null
+  };
+}
+
+function parseAttachmentFilenames(adjuntosValue) {
+  if (!adjuntosValue) return [];
+  try {
+    const parsed = JSON.parse(adjuntosValue);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((entry) => path.basename(String(entry?.filename || "").trim()))
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function deleteCaseAttachments(rows = []) {
+  rows.forEach((row) => {
+    parseAttachmentFilenames(row?.adjuntos).forEach((filename) => {
+      const filePath = path.join(UPLOADS_DIR, filename);
+      if (fs.existsSync(filePath)) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch (err) {
+          console.error("PURGE ATTACHMENT ERR:", filename, err.message);
+        }
+      }
+    });
+  });
+}
+
+function purgeExpiredClosedCases() {
+  const details = {
+    userRetentionDays: USER_RETENTION_DAYS,
+    deletedUserCases: 0,
+    deletedEnterpriseCases: 0
+  };
+
+  const userRows = all(
+    `SELECT id, adjuntos
+     FROM cases
+     WHERE estado = 'Cerrado'
+       AND enterprise_user_id IS NULL
+       AND datetime(updated_at) <= datetime('now', ?)` ,
+    [`-${USER_RETENTION_DAYS} day`]
+  );
+
+  const enterpriseRows = all(
+    `SELECT c.id, c.adjuntos
+     FROM cases c
+     JOIN enterprise_retention_settings ers ON ers.enterprise_user_id = c.enterprise_user_id
+     WHERE c.estado = 'Cerrado'
+       AND ers.retention_mode = 'auto'
+       AND ers.retention_days IN (30, 60, 90)
+       AND datetime(c.updated_at) <= datetime('now', printf('-%d day', ers.retention_days))`
+  );
+
+  if (userRows.length) {
+    deleteCaseAttachments(userRows);
+    userRows.forEach((row) => run("DELETE FROM cases WHERE id = ?", [row.id]));
+    details.deletedUserCases = userRows.length;
+  }
+
+  if (enterpriseRows.length) {
+    deleteCaseAttachments(enterpriseRows);
+    enterpriseRows.forEach((row) => run("DELETE FROM cases WHERE id = ?", [row.id]));
+    details.deletedEnterpriseCases = enterpriseRows.length;
+  }
+
+  return details;
 }
 
 const registerSchema = z.object({
@@ -468,6 +739,11 @@ const caseUpdateSchema = z.object({
   mensaje: z.union([z.string().trim().max(3000), z.null(), z.undefined()]),
   estado: z.union([z.string().trim().max(120), z.null(), z.undefined()]),
   prioridad: z.union([z.string().trim().max(20), z.null(), z.undefined()])
+});
+
+const enterpriseRetentionSchema = z.object({
+  retention_mode: z.string().trim().toLowerCase(),
+  retention_days: z.union([z.number(), z.string(), z.null(), z.undefined()])
 });
 
 function validateBody(schema, payload) {
@@ -825,7 +1101,7 @@ let cache = { data: [], ts: 0 };
 const TTL_MS = 1000 * 60 * 30;
 
 async function fetchFeed(url) {
-  const { data: xml } = await axios.get(url, { timeout: 12000 });
+  const { data: xml } = await axios.get(url, { timeout: 7000 });
   const json = await parseStringPromise(xml, { trim: true, explicitArray: false });
   const items = json.rss?.channel?.item || [];
   const arr = Array.isArray(items) ? items : [items];
@@ -837,7 +1113,10 @@ const handleNoticias = async (_req, res) => {
     if (Date.now() - cache.ts < TTL_MS && cache.data.length) {
       return res.json(cache.data.slice(0, 8));
     }
-    const results = (await Promise.all(FEEDS.map(fetchFeed))).flat();
+    const settled = await Promise.allSettled(FEEDS.map(fetchFeed));
+    const results = settled
+      .filter((result) => result.status === "fulfilled")
+      .flatMap((result) => result.value);
     const seen = new Set();
     const uniq = [];
     results
@@ -957,6 +1236,60 @@ app.get("/api/security/login-audit", authRequired, adminOnly, async (req, res) =
     return res.json(rows);
   } catch (err) {
     return res.status(500).json({ error: "Error al listar auditoria de login" });
+  }
+});
+
+app.get("/api/enterprise-retention", authRequired, async (req, res) => {
+  try {
+    if (req.user?.role !== "enterprise") {
+      return res.status(403).json({ error: "Acceso restringido" });
+    }
+    const settings = getEnterpriseRetentionSettings(req.user.sub);
+    return res.json(settings);
+  } catch (err) {
+    return res.status(500).json({ error: "Error al obtener configuracion de purga" });
+  }
+});
+
+app.put("/api/enterprise-retention", authRequired, async (req, res) => {
+  try {
+    if (req.user?.role !== "enterprise") {
+      return res.status(403).json({ error: "Acceso restringido" });
+    }
+    const validated = validateBody(enterpriseRetentionSchema, req.body);
+    if (!validated.ok) {
+      return res.status(400).json({ error: validated.error });
+    }
+    const normalized = normalizeEnterpriseRetentionInput(validated.data);
+    if (!normalized.ok) {
+      return res.status(400).json({ error: normalized.error });
+    }
+
+    run(
+      `INSERT INTO enterprise_retention_settings
+      (enterprise_user_id, retention_mode, retention_days, updated_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(enterprise_user_id) DO UPDATE SET
+        retention_mode = excluded.retention_mode,
+        retention_days = excluded.retention_days,
+        updated_by = excluded.updated_by,
+        updated_at = CURRENT_TIMESTAMP`,
+      [req.user.sub, normalized.mode, normalized.days, req.user.sub]
+    );
+
+    logSecurityEvent(req, {
+      userId: req.user.sub,
+      eventType: "enterprise_retention_update",
+      resourceType: "enterprise_settings",
+      resourceId: req.user.sub,
+      success: true,
+      details: { retention_mode: normalized.mode, retention_days: normalized.days }
+    });
+
+    const settings = getEnterpriseRetentionSettings(req.user.sub);
+    return res.json(settings);
+  } catch (err) {
+    return res.status(500).json({ error: "Error al guardar configuracion de purga" });
   }
 });
 
@@ -1905,13 +2238,67 @@ initSqlJs({ locateFile: (file) => path.join(__dirname, "node_modules", "sql.js",
     } else {
       db = new SQL.Database();
     }
+    // Recuperacion simple ante corte durante persistencia atomica.
+    try {
+      const bakPath = `${DB_PATH}.bak`;
+      if (!fs.existsSync(DB_PATH) && fs.existsSync(bakPath)) {
+        fs.renameSync(bakPath, DB_PATH);
+      }
+      const tmpPath = `${DB_PATH}.tmp`;
+      if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+      // Si existe .bak y DB existe, limpiamos el backup viejo.
+      if (fs.existsSync(DB_PATH) && fs.existsSync(bakPath)) fs.unlinkSync(bakPath);
+    } catch (err) {
+      console.warn("DB RECOVERY WARN:", err.message);
+    }
     initDb();
     if (!CAN_SEND_EMAIL) {
       console.warn("AUTH WARN: verificacion por email desactivada (falta SENDGRID_API_KEY o EMAIL_FROM).");
     }
-    app.listen(PORT, () => {
+    try {
+      const firstPurge = purgeExpiredClosedCases();
+      console.log("PURGE INIT:", JSON.stringify(firstPurge));
+    } catch (err) {
+      console.error("PURGE INIT ERR:", err.message);
+    }
+    const purgeIntervalMs = DATA_PURGE_INTERVAL_HOURS * 60 * 60 * 1000;
+    setInterval(() => {
+      try {
+        const result = purgeExpiredClosedCases();
+        if (result.deletedUserCases > 0 || result.deletedEnterpriseCases > 0) {
+          console.log("PURGE RUN:", JSON.stringify(result));
+        }
+      } catch (err) {
+        console.error("PURGE RUN ERR:", err.message);
+      }
+    }, purgeIntervalMs);
+    server = app.listen(PORT, () => {
       console.log(`Servidor corriendo en el puerto ${PORT}`);
     });
+
+    const shutdown = (signal) => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      console.log(`SHUTDOWN: ${signal}`);
+      try {
+        if (flushTimer) clearTimeout(flushTimer);
+      } catch (_e) {}
+      try {
+        flushPersistDb();
+      } catch (_e) {}
+      if (server) {
+        server.close(() => {
+          process.exit(0);
+        });
+        // hard-exit if close hangs
+        setTimeout(() => process.exit(0), 8000).unref();
+      } else {
+        process.exit(0);
+      }
+    };
+
+    process.on("SIGINT", () => shutdown("SIGINT"));
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
   })
   .catch((err) => {
     console.error("DB INIT ERR:", err.message);

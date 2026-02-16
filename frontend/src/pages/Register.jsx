@@ -15,6 +15,7 @@ export default function Register() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [emailVerificationEnabled, setEmailVerificationEnabled] = useState(true);
+  const [acceptLegal, setAcceptLegal] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -39,6 +40,10 @@ export default function Register() {
     setResendStatus("");
     if (password !== confirmPassword) {
       setError("Las contrasenas no coinciden.");
+      return;
+    }
+    if (!acceptLegal) {
+      setError("Debes aceptar los Terminos y la Politica de Privacidad.");
       return;
     }
     setLoading(true);
@@ -164,6 +169,18 @@ export default function Register() {
                 </button>
               </div>
             </div>
+            <label className="flex items-start gap-2 text-sm text-slate-600">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={acceptLegal}
+                onChange={(e) => setAcceptLegal(e.target.checked)}
+              />
+              <span>
+                Acepto los <Link to="/terminos" className="text-emerald-700 font-semibold">Terminos y Condiciones</Link> y la{" "}
+                <Link to="/privacidad" className="text-emerald-700 font-semibold">Politica de Privacidad</Link>.
+              </span>
+            </label>
             {error && <p className="text-rose-600 text-sm">{error}</p>}
             {success && <p className="text-emerald-600 text-sm">{success}</p>}
             {resendStatus && (

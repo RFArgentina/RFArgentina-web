@@ -35,14 +35,33 @@ export async function apiRequest(path, options = {}) {
     credentials: "include"
   });
 
+  const contentType = response.headers.get("content-type") || "";
   const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
+  let data = null;
+  if (text && contentType.includes("application/json")) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      // If the server/proxy returned invalid JSON, fall back to raw text.
+      data = null;
+    }
+  }
 
   if (!response.ok) {
-    const message = (data && data.error) || "Error en la solicitud";
+    let message = (data && data.error) || "Error en la solicitud";
+    if (!data && text) {
+      // CRA dev proxy returns plain text like: "Proxy error: Could not proxy request ..."
+      if (/^proxy error/i.test(text.trim())) {
+        message = "Backend no disponible o proxy mal configurado (verifica que el backend este corriendo).";
+      } else {
+        message = text.slice(0, 300);
+      }
+    }
     const err = new Error(message);
     if (data && data.code) err.code = data.code;
     throw err;
   }
-  return data;
+
+  // Prefer JSON, but allow non-JSON successful responses (rare).
+  return data ?? (text || null);
 }

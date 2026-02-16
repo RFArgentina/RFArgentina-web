@@ -44,6 +44,9 @@ export default function Dashboard() {
   const [enterpriseSearchQuery, setEnterpriseSearchQuery] = useState("");
   const [enterpriseFilterStatus, setEnterpriseFilterStatus] = useState("");
   const [enterpriseFilterPriority, setEnterpriseFilterPriority] = useState("");
+  const [enterpriseRetentionChoice, setEnterpriseRetentionChoice] = useState("manual");
+  const [enterpriseRetentionSaved, setEnterpriseRetentionSaved] = useState(null);
+  const [savingRetention, setSavingRetention] = useState(false);
   const [expandedEnterpriseCaseDetailId, setExpandedEnterpriseCaseDetailId] = useState(null);
   const [showNewCaseForm, setShowNewCaseForm] = useState(true);
   const [adminNote, setAdminNote] = useState("");
@@ -72,6 +75,12 @@ export default function Dashboard() {
   ];
   const enterpriseStatusOptions = ["Recibido", "En analisis", "Pendiente interno", "Cerrado"];
   const priorityOptions = ["Alta", "Media", "Baja"];
+  const enterpriseRetentionOptions = [
+    { value: "manual", label: "Manual (sin purga automatica)" },
+    { value: "30", label: "Eliminar a los 30 dias" },
+    { value: "60", label: "Eliminar a los 60 dias" },
+    { value: "90", label: "Eliminar a los 90 dias" }
+  ];
 
   const statusTemplates = {
     "Recibido": "Caso recibido correctamente. En breve iniciamos el análisis.",
@@ -343,6 +352,16 @@ export default function Dashboard() {
         setEnterpriseInquiries(inquiries || []);
         const enterpriseUsersData = await apiRequest("/enterprise-users");
         setEnterpriseUsers(enterpriseUsersData || []);
+      } else if (me.role === "enterprise") {
+        const retentionConfig = await apiRequest("/enterprise-retention");
+        const mode = retentionConfig?.retention_mode;
+        const days = Number(retentionConfig?.retention_days || 0);
+        if (mode === "auto" && [30, 60, 90].includes(days)) {
+          setEnterpriseRetentionChoice(String(days));
+        } else {
+          setEnterpriseRetentionChoice("manual");
+        }
+        setEnterpriseRetentionSaved(retentionConfig || null);
       }
     } catch (err) {
       setError(err.message);
@@ -618,6 +637,27 @@ export default function Dashboard() {
       setError(err.message || "No se pudo actualizar el caso.");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleSaveEnterpriseRetention = async () => {
+    setSavingRetention(true);
+    setError("");
+    try {
+      const isManual = enterpriseRetentionChoice === "manual";
+      const payload = {
+        retention_mode: isManual ? "manual" : "auto",
+        retention_days: isManual ? null : Number(enterpriseRetentionChoice)
+      };
+      const saved = await apiRequest("/enterprise-retention", {
+        method: "PUT",
+        body: JSON.stringify(payload)
+      });
+      setEnterpriseRetentionSaved(saved || null);
+    } catch (err) {
+      setError(err.message || "No se pudo guardar la politica de purga.");
+    } finally {
+      setSavingRetention(false);
     }
   };
 
@@ -1317,7 +1357,47 @@ export default function Dashboard() {
             ))}
 
             {!loading && isEnterprise && (
-              <div className="bg-white/10 border border-white/10 rounded-2xl overflow-hidden">
+              <div className="space-y-4">
+                <div className="bg-white/10 border border-white/10 rounded-2xl p-4">
+                  <h3 className="text-base font-semibold">Politica de retencion de datos</h3>
+                  <p className="text-xs text-slate-300 mt-1">
+                    Para mayor seguridad, podes definir la eliminacion automatica de casos cerrados.
+                  </p>
+                  <div className="mt-3 grid md:grid-cols-[1fr_auto] gap-3 items-end">
+                    <div>
+                      <label className="text-xs text-slate-300 block mb-1">
+                        Eliminar casos cerrados automaticamente
+                      </label>
+                      <select
+                        className="w-full rounded-lg bg-slate-900/50 border border-white/15 px-3 py-2 text-sm text-white"
+                        value={enterpriseRetentionChoice}
+                        onChange={(e) => setEnterpriseRetentionChoice(e.target.value)}
+                      >
+                        {enterpriseRetentionOptions.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <Button
+                      className="bg-emerald-500 hover:bg-emerald-600 text-white"
+                      onClick={handleSaveEnterpriseRetention}
+                      disabled={savingRetention}
+                    >
+                      {savingRetention ? "Guardando..." : "Guardar politica"}
+                    </Button>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-2">
+                    La purga aplica solo sobre casos cerrados del panel activo. Los backups siguen su propia rotacion tecnica.
+                  </p>
+                  {enterpriseRetentionSaved && (
+                    <p className="text-[11px] text-emerald-200 mt-2">
+                      Configuracion vigente: {enterpriseRetentionSaved.retention_mode === "auto"
+                        ? `${enterpriseRetentionSaved.retention_days} dias`
+                        : "manual"}.
+                    </p>
+                  )}
+                </div>
+                <div className="bg-white/10 border border-white/10 rounded-2xl overflow-hidden">
                 <div className="px-4 py-4 border-b border-white/10 bg-white/5">
                   <div className="grid md:grid-cols-4 gap-3">
                     <input
@@ -1481,6 +1561,7 @@ export default function Dashboard() {
                     </tbody>
                   </table>
                 </div>
+              </div>
               </div>
             )}
 
