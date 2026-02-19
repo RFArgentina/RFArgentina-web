@@ -16,7 +16,7 @@ export default function CaseLookup() {
     alias: "MATIASHERNAN.M",
     referencia: "Indica tu email y plan elegido en el comprobante"
   };
-  const WHATSAPP_SUPPORT_NUMBER = String(process.env.REACT_APP_WHATSAPP_SUPPORT || "").replace(/\D/g, "");
+  const WHATSAPP_SUPPORT_NUMBER = String(process.env.REACT_APP_WHATSAPP_SUPPORT || "5492212024379").replace(/\D/g, "");
   const HAS_WHATSAPP_SUPPORT = WHATSAPP_SUPPORT_NUMBER.length >= 10;
 
   const handleOpenWhatsApp = () => {
