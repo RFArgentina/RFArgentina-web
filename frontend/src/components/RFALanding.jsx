@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from "react-router-dom";
 import { getToken } from "@/lib/auth";
 import { plans } from "@/data/plans";
@@ -25,19 +25,30 @@ const RFALanding = () => {
     navigate(isAuthenticated ? "/panel" : "/planes");
   };
 
-const [news, setNews] = useState([]);
+const fallbackNews = [
+    {
+      title: "Recomendaci?n RFA: guard? comprobantes, capturas y n?meros de operaci?n desde el primer d?a.",
+      link: "/consultar-caso",
+      date: ""
+    },
+    {
+      title: "Billeteras y bancos: si no responden en plazo, registr? el reclamo y avanz? por canal formal.",
+      link: "/crear-caso",
+      date: ""
+    },
+    {
+      title: "Evit? errores frecuentes: no borres chats ni correos de soporte durante el reclamo.",
+      link: "/planes",
+      date: ""
+    }
+  ];
+
+  const [news, setNews] = useState([]);
   const [newsLoading, setNewsLoading] = useState(true);
-  const [newsError, setNewsError] = useState(false);
 
   useEffect(() => {
-    fetch("/api/news")
-      .then(res => res.json())
-      .then(data => setNews(Array.isArray(data) ? data : []))
-      .catch(err => {
-        console.error("Error cargando noticias:", err);
-        setNewsError(true);
-      })
-      .finally(() => setNewsLoading(false));
+    setNews(fallbackNews);
+    setNewsLoading(false);
   }, []);
 
   // ---- Pasos de trabajo ----
@@ -281,13 +292,10 @@ const services = [
             {newsLoading && (
               <li className="text-slate-300 text-sm">Cargando noticias...</li>
             )}
-            {newsError && !newsLoading && (
-              <li className="text-rose-300 text-sm">No se pudieron cargar las noticias.</li>
-            )}
-            {!newsLoading && !newsError && news.length === 0 && (
+            {!newsLoading && news.length === 0 && (
               <li className="text-slate-300 text-sm">Sin noticias por el momento.</li>
             )}
-            {!newsLoading && !newsError && news.map((n) => (
+            {!newsLoading && news.map((n) => (
               <li
                 key={n.link || n.title}
                 className="bg-slate-900/40 border border-emerald-500/20 p-3 rounded-md hover:bg-slate-900/60 transition-colors"
