@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { apiRequest } from "@/lib/api";
 
 export default function Enterprise() {
   const [empresa, setEmpresa] = useState("");
@@ -29,9 +30,8 @@ export default function Enterprise() {
     setError("");
     setSent(false);
 
-    fetch("/api/enterprise", {
+    apiRequest("/enterprise", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         empresa,
         rubro,
@@ -44,13 +44,6 @@ export default function Enterprise() {
         comentarios
       })
     })
-      .then(async (res) => {
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error(data.error || "No se pudo enviar la consulta");
-        }
-        return res.json();
-      })
       .then(() => {
         setEmpresa("");
         setRubro("");
