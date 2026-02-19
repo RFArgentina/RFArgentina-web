@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+﻿import { Link } from "react-router-dom";
 import { plans } from "@/data/plans";
 import { Button } from "@/components/ui/button";
 
@@ -10,9 +10,9 @@ export default function Plans() {
           <p className="text-emerald-300 uppercase tracking-[0.3em] text-xs font-semibold mb-3">
             Planes disponibles
           </p>
-          <h1 className="text-3xl md:text-4xl font-bold mb-3">Elegí el plan ideal</h1>
+          <h1 className="text-3xl md:text-4xl font-bold mb-3">Elegi el plan ideal</h1>
           <p className="text-slate-300">
-            Ya estás registrado. Podés elegir un plan y luego cargar tu caso.
+            Elegi un plan y carga tu caso en el formulario publico, sin login de usuario.
           </p>
         </div>
 
@@ -40,9 +40,14 @@ export default function Plans() {
         </div>
 
         <div className="flex flex-wrap justify-center gap-4">
-          <Link to="/panel">
+          <Link to="/crear-caso">
             <Button className="bg-emerald-500 hover:bg-emerald-600 text-white">
-              Ir a mi panel
+              Cargar mi caso
+            </Button>
+          </Link>
+          <Link to="/consultar-caso">
+            <Button className="bg-white/10 hover:bg-white/20 text-white border border-white/20">
+              Consultar seguimiento
             </Button>
           </Link>
           <Link to="/">
@@ -55,4 +60,3 @@ export default function Plans() {
     </div>
   );
 }
-
