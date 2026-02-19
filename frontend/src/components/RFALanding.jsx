@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { useNavigate } from "react-router-dom";
 import { getToken } from "@/lib/auth";
 import { plans } from "@/data/plans";
@@ -24,32 +24,6 @@ const RFALanding = () => {
     }
     navigate(isAuthenticated ? "/panel" : "/planes");
   };
-
-const fallbackNews = [
-    {
-      title: "Recomendaci?n RFA: guard? comprobantes, capturas y n?meros de operaci?n desde el primer d?a.",
-      link: "/consultar-caso",
-      date: ""
-    },
-    {
-      title: "Billeteras y bancos: si no responden en plazo, registr? el reclamo y avanz? por canal formal.",
-      link: "/crear-caso",
-      date: ""
-    },
-    {
-      title: "Evit? errores frecuentes: no borres chats ni correos de soporte durante el reclamo.",
-      link: "/planes",
-      date: ""
-    }
-  ];
-
-  const [news, setNews] = useState([]);
-  const [newsLoading, setNewsLoading] = useState(true);
-
-  useEffect(() => {
-    setNews(fallbackNews);
-    setNewsLoading(false);
-  }, []);
 
   // ---- Pasos de trabajo ----
   const steps = [
@@ -156,18 +130,20 @@ const services = [
           <div className="max-w-6xl mx-auto grid md:grid-cols-[1.2fr_0.8fr] gap-10 items-center">
             <div>
               <p className="text-emerald-300 uppercase tracking-[0.3em] text-xs font-semibold mb-4">
-                Consultoría en reclamos financieros
+                Defensa administrativa especializada frente a entidades financieras
               </p>
               <h1 className="text-4xl md:text-6xl font-extrabold leading-tight mb-6 text-slate-100">
                 Reclamos Financieros Argentina
               </h1>
 
               <p className="text-lg md:text-2xl text-slate-200 mb-8 leading-relaxed">
-                Gestionamos reclamos administrativos ante bancos, billeteras virtuales, tarjetas y otras entidades.
-                Redactamos, presentamos y hacemos seguimiento con respaldo y comunicación clara.
+                Estructuramos y gestionamos reclamos contra bancos, billeteras digitales, tarjetas y plataformas de inversión con precisión técnica, fundamento normativo y seguimiento documentado.
+              </p>
+              <p className="text-slate-300 mb-8">
+                Cuando el reclamo está bien armado, la respuesta cambia.
               </p>
               <div className="flex flex-wrap gap-3 mb-8">
-                {["100% online", "Proceso guiado", "Confidencialidad", "Equipo experto"].map((item) => (
+                {["Modalidad 100% online", "Registro formal de comunicaciones", "Control de plazos", "Enfoque técnico y estratégico"].map((item) => (
                   <span key={item} className="px-4 py-2 rounded-full text-xs font-semibold rfa-chip">
                     {item}
                   </span>
@@ -221,6 +197,26 @@ const services = [
           </div>
         </section>
 
+        <section className="py-10 px-6">
+          <div className="max-w-6xl mx-auto bg-white/5 border border-white/10 rounded-2xl p-8">
+            <h2 className="text-2xl md:text-3xl font-bold text-slate-100 mb-4">
+              Por qué un reclamo estructurado cambia la respuesta de la entidad
+            </h2>
+            <p className="text-slate-300 mb-4">
+              Las entidades financieras operan con procesos automatizados y respuestas estandarizadas.
+              Un reclamo mal planteado suele quedar atrapado en ese circuito.
+            </p>
+            <p className="text-slate-300 mb-4">En RFA trabajamos distinto:</p>
+            <ul className="space-y-2 text-slate-200 text-sm mb-4">
+              <li>• Hechos ordenados cronológicamente y con trazabilidad clara.</li>
+              <li>• Identificación de inconsistencias operativas.</li>
+              <li>• Fundamento en normativa aplicable cuando corresponde (Ley 24.240, Comunicaciones BCRA, normativa CNV, etc.).</li>
+              <li>• Registro formal y control de plazos de respuesta.</li>
+            </ul>
+            <p className="text-slate-100 font-semibold">La diferencia no es el tono. Es la estructura.</p>
+          </div>
+        </section>
+
         {/* ================= MODALIDADES ================= */}
         <section id="modalidades" className="py-10 px-6">
           <div className="max-w-6xl mx-auto grid md:grid-cols-2 gap-6">
@@ -263,76 +259,25 @@ const services = [
  
       {/* ================= QUI?NES SOMOS ================= */}
 <section className="py-20 px-6 bg-white/5 backdrop-blur-sm">
-  <div className="container mx-auto grid md:grid-cols-2 gap-12 items-center">
-    
-    {/* Columna Izquierda: Imagen con bloque flotante */}
-    <div className="relative">
-      <img
-        src="https://images.unsplash.com/photo-1603796846097-bee99e4a601f"
-        alt="Firma de documentos - RFA"
-        className="rounded-2xl shadow-xl w-full h-48 md:h-80 object-cover"
-      />
-
-
-      {/* BLOQUE FLOTANTE DE NOTICIAS */}
-      <div className="absolute inset-0 flex items-center justify-center">
-        <div className="bg-slate-900/70 backdrop-blur-lg text-white p-6 rounded-2xl shadow-2xl w-full h-full border border-emerald-500/30">
-          <h3 className="text-emerald-300 text-lg font-semibold mb-4 border-b border-emerald-500/30 pb-2 text-center sticky top-0 bg-slate-900/80">
-            Últimas Noticias Financieras
-          </h3>
-          <ul
-            className="space-y-3 pr-3"
-            style={{
-              maxHeight: "230px", // Scroll largo visible
-              overflowY: "scroll", // Solo este scrollea
-              scrollbarWidth: "thin",
-              scrollbarColor: "#10b981 transparent",
-            }}
-          >
-            {newsLoading && (
-              <li className="text-slate-300 text-sm">Cargando noticias...</li>
-            )}
-            {!newsLoading && news.length === 0 && (
-              <li className="text-slate-300 text-sm">Sin noticias por el momento.</li>
-            )}
-            {!newsLoading && news.map((n) => (
-              <li
-                key={n.link || n.title}
-                className="bg-slate-900/40 border border-emerald-500/20 p-3 rounded-md hover:bg-slate-900/60 transition-colors"
-              >
-                <a
-                  href={n.link}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-slate-200 hover:text-emerald-300 text-sm font-medium"
-                >
-                  {n.title}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-    </div>
-
-
-    {/* Columna Derecha: Quiénes somos */}
-    <div className="md:col-start-2 md:row-start-1">
+  <div className="container mx-auto max-w-4xl">
+    <div>
       <h2 className="text-3xl md:text-4xl font-bold text-emerald-300 mb-6">
         Quiénes somos
       </h2>
       <p className="text-lg text-slate-300 leading-relaxed mb-6">
-        <strong className="text-emerald-300">RFA</strong> es una consultoría
-        especializada en reclamos financieros. Ayudamos a usuarios y empresas
-        a transformar sus quejas en casos sólidos, claros y listos para ser
-        presentados ante la entidad correspondiente, con un proceso claro y documentado.
+        RFA es una estructura especializada en reclamos financieros administrativos.
       </p>
+      <p className="text-lg text-slate-300 leading-relaxed mb-6">
+        Surge ante una realidad concreta: entidades que responden con automatización,
+        fragmentación de tickets y demoras sistemáticas.
+      </p>
+      <p className="text-lg text-slate-300 leading-relaxed mb-4">Nuestro enfoque se basa en:</p>
       <ul className="space-y-3">
         {[
-          "Bancos tradicionales y digitales",
-          "Billeteras digitales",
-          "Plataformas de inversión",
-          "Casas de apuestas legales",
+          "Precisión técnica",
+          "Análisis estructural del caso",
+          "Comunicación clara y documentada",
+          "Seguimiento hasta agotar vías administrativas",
         ].map((item, i) => (
           <li key={i} className="flex items-center gap-3">
             <CheckCircle className="w-5 h-5 text-emerald-300" />
@@ -340,6 +285,7 @@ const services = [
           </li>
         ))}
       </ul>
+      <p className="text-slate-100 font-semibold mt-6">No improvisamos reclamos. Los estructuramos.</p>
     </div>
   </div>
 </section>
@@ -409,6 +355,11 @@ const services = [
                 desinformación o incumplimiento.
               </p>
               <p className="text-slate-300 max-w-4xl mx-auto mt-4">
+                En cada caso analizamos no solo el hecho puntual, sino la consistencia operativa de la entidad involucrada.
+                Cuando detectamos omisiones, contradicciones o falta de respaldo contractual, lo dejamos asentado formalmente.
+                Eso eleva el peso técnico.
+              </p>
+              <p className="text-slate-300 max-w-4xl mx-auto mt-4">
                 Nos ocupamos de redactar, presentar y hacer el seguimiento del reclamo formal ante la entidad correspondiente,
                 exigiendo una respuesta fundada y justa en base al caso concreto, hasta agotar vías administrativas.
               </p>
@@ -443,11 +394,16 @@ const services = [
               </div>
 
               <div className="bg-white/5 border border-white/10 rounded-2xl p-6 h-full">
-                <h3 className="text-xl font-semibold text-emerald-300 mb-3">Que no hacemos</h3>
+                <h3 className="text-xl font-semibold text-emerald-300 mb-3">Qué no hacemos</h3>
                 <ul className="space-y-2 text-slate-200 text-sm">
-                  <li className="flex items-start gap-2"><Gavel className="w-5 h-5 text-emerald-400 mt-0.5" />No ejercemos representacion legal ni patrocinio judicial.</li>
-                  <li className="flex items-start gap-2"><Gavel className="w-5 h-5 text-emerald-400 mt-0.5" />No intervenimos en mediaciones oficiales o juicios (aunque te preparamos la carpeta para que puedas hacerlo con tu abogado).</li>
+                  <li className="flex items-start gap-2"><Gavel className="w-5 h-5 text-emerald-400 mt-0.5" />No ejercemos patrocinio judicial.</li>
+                  <li className="flex items-start gap-2"><Gavel className="w-5 h-5 text-emerald-400 mt-0.5" />No intervenimos en mediaciones oficiales.</li>
+                  <li className="flex items-start gap-2"><Gavel className="w-5 h-5 text-emerald-400 mt-0.5" />No prometemos resultados judiciales ni indemnizaciones.</li>
                 </ul>
+                <p className="text-slate-300 text-sm mt-4">
+                  Nuestro trabajo es administrativo y técnico. Si el caso requiere instancia judicial, entregamos la
+                  carpeta estructurada para que tu abogado continúe con una base sólida.
+                </p>
               </div>
             </div>
           </div>
@@ -460,6 +416,10 @@ const services = [
             <h2 className="text-3xl md:text-4xl font-bold text-emerald-300 mb-6">
               Planes de servicio
             </h2>
+            <p className="text-slate-200 mb-4">
+              Un reclamo bien estructurado no depende de la agresividad, sino de la claridad y la consistencia.
+              Elegí el nivel de intervención que necesitás.
+            </p>
             <p className="text-lg text-slate-300 mb-8">
               Elegí la modalidad que mejor se adapta a tu caso.
             </p>
