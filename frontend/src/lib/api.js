@@ -1,8 +1,19 @@
 import { getToken } from "./auth";
 
-const API_BASE = process.env.REACT_APP_BACKEND_URL
-  ? `${process.env.REACT_APP_BACKEND_URL}/api`
-  : "/api";
+const BACKEND_FALLBACK_URL = "https://rfa-backend-1.onrender.com";
+
+function resolveApiBase() {
+  const envBase = process.env.REACT_APP_BACKEND_URL;
+  if (envBase) return `${envBase}/api`;
+  if (typeof window !== "undefined") {
+    const host = String(window.location.hostname || "").toLowerCase();
+    const isLocal = host === "localhost" || host === "127.0.0.1";
+    if (!isLocal) return `${BACKEND_FALLBACK_URL}/api`;
+  }
+  return "/api";
+}
+
+const API_BASE = resolveApiBase();
 const CSRF_COOKIE = process.env.REACT_APP_CSRF_COOKIE_NAME || "rfa_csrf_token";
 
 function getCookieValue(name) {
