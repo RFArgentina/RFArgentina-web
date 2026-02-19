@@ -80,7 +80,7 @@ export default function Enterprise() {
             </h1>
             <p className="text-lg text-slate-300 leading-relaxed">
               En RFA ayudamos a empresas que reciben altos volumenes de reclamos a convertirlos en casos ordenados,
-              claros y listos para su gestion interna.
+              claros y listos para su gestión interna.
             </p>
             <p className="text-sm text-slate-400 mt-4">
               Nos enfocamos exclusivamente en la organizacion profesional, no en la resolucion directa.
@@ -107,7 +107,7 @@ export default function Enterprise() {
             <h2 className="text-lg font-semibold mb-4">Como impactamos en tu operacion</h2>
             <ul className="space-y-3 text-sm text-slate-200">
               {[
-                "Casos claros y trazables para gestion interna",
+                    "Casos claros y trazables para gestión interna",
                 "Menos tiempo en tareas repetitivas",
                 "Equipos mas ordenados y con mejor productividad",
                 "Menor riesgo legal y reputacional"
@@ -191,7 +191,7 @@ export default function Enterprise() {
                 {
                   title: "3. Alta de usuario empresa",
                   text:
-                    "Habilitamos un usuario exclusivo para la empresa, con acceso a su tablero de casos y trazabilidad completa de cada gestion interna."
+                    "Habilitamos un usuario exclusivo para la empresa, con acceso a su tablero de casos y trazabilidad completa de cada gestión interna."
                 },
                 {
                   title: "4. Seguimiento y claridad operativa",
@@ -251,7 +251,7 @@ export default function Enterprise() {
         <section className="bg-white/10 border border-white/10 rounded-2xl p-8">
           <h2 className="text-2xl font-semibold mb-2">Formulario de contacto para empresas</h2>
           <p className="text-sm text-slate-400 mb-4">
-            El acceso al panel de empresa se habilita unicamente por RFA. No hay registro publico para cuentas empresa.
+            El acceso al panel de empresa se habilita únicamente por RFA. No hay registro público para cuentas empresa.
           </p>
           <p className="text-sm text-slate-300 mb-6">Completa los datos y te contactamos a la brevedad.</p>
 
@@ -285,7 +285,7 @@ export default function Enterprise() {
                   <option value="Seguros">Seguros</option>
                   <option value="Salud">Salud</option>
                   <option value="Telecomunicaciones">Telecomunicaciones</option>
-                  <option value="Servicios publicos">Servicios publicos</option>
+                  <option value="Servicios públicos">Servicios públicos</option>
                   <option value="Educacion">Educacion</option>
                   <option value="Turismo y transporte">Turismo y transporte</option>
                   <option value="Logistica">Logistica</option>

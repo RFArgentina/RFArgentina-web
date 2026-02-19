@@ -4,7 +4,7 @@ export const plans = [
     name: "Plan Inicial - Carpeta Profesional",
     summary:
       "Preparamos todo el reclamo para que puedas presentarlo con respaldo documental y fundamentos claros, sin depender de terceros.",
-    price: "$70.000",
+    price: "$85.000",
     priceUsd: "USD 40",
     period: "Entrega única",
     features: [
@@ -25,7 +25,7 @@ export const plans = [
     summary:
       "Nos ocupamos de presentar el reclamo y hacer seguimiento administrativo hasta agotar vías administrativas.",
     featured: true,
-    price: "$120.000",
+    price: "$150.000",
     priceUsd: "USD 75",
     period: "Hasta agotar vías administrativas",
     features: [
@@ -45,7 +45,7 @@ export const plans = [
     name: "Plan Completo - Seguimiento + Asistencia Extendida",
     summary:
       "Incluye acompañamiento intensivo, prioridad operativa y soporte continuo para casos complejos o de mayor desgaste.",
-    price: "$220.000",
+    price: "$280.000",
     priceUsd: "USD 130",
     period: "Hasta 60 días de seguimiento intensivo",
     features: [

@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { useNavigate } from "react-router-dom";
 import { getToken } from "@/lib/auth";
+import { plans } from "@/data/plans";
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { FaInstagram, FaFacebook, FaLinkedin } from "react-icons/fa";
@@ -11,7 +12,7 @@ const RFALanding = () => {
   const isAuthenticated = Boolean(getToken());
   // ---- CTA: abre el formulario (gratis) en pestaña nueva ----
   const handleCTAClick = () => {
-    navigate(isAuthenticated ? "/panel" : "/login");
+    navigate(isAuthenticated ? "/panel" : "/crear-caso");
   };
  
   
@@ -21,7 +22,7 @@ const RFALanding = () => {
       el.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-    navigate(isAuthenticated ? "/panel" : "/registro");
+    navigate(isAuthenticated ? "/panel" : "/planes");
   };
 
 const [news, setNews] = useState([]);
@@ -43,18 +44,18 @@ const [news, setNews] = useState([]);
   const steps = [
     {
       icon: <FileText className="w-10 h-10 text-emerald-300" />,
-      title: 'Cargás tu reclamo',
-      description: 'Completás nuestro formulario con los detalles de tu situación financiera.',
+      title: 'Completás el formulario',
+      description: 'Cargás tu caso sin registro: datos de contacto, entidad y descripción del reclamo.',
     },
     {
       icon: <Shield className="w-10 h-10 text-emerald-300" />,
-      title: 'Organizamos pruebas',
-      description: 'Recopilamos y ordenamos toda la documentación necesaria.',
+      title: 'Recibís tu ID de seguimiento',
+      description: 'Al enviar, te damos un ID único (RFA-XXXXXX) para consultar el estado cuando quieras.',
     },
     {
       icon: <Gavel className="w-10 h-10 text-emerald-300" />,
-      title: 'Carpeta lista',
-      description: 'Entregamos una carpeta profesional lista para presentar ante la entidad o para tu asesor legal.',
+      title: 'Analizamos y actualizamos',
+      description: 'El equipo revisa el caso, gestiona los avances y vos los ves en “Consultar caso” con email o DNI + ID.',
     },
   ];
 
@@ -103,7 +104,7 @@ const services = [
     },
     {
       q: "¿Cómo me informan avances?",
-      a: "Vas a ver el estado en tu panel y, cuando corresponde, dejamos registro de las comunicaciones y actualizaciones del caso."
+      a: "Podés consultar estado y avances con tu email + ID de caso; además, cuando corresponde, dejamos registro de comunicaciones y actualizaciones."
     },
     {
       q: "¿El análisis inicial tiene costo?",
@@ -216,7 +217,7 @@ const services = [
               <p className="text-xs uppercase tracking-[0.3em] text-emerald-300 font-semibold mb-3">Servicio principal</p>
               <h2 className="text-2xl md:text-3xl font-bold text-slate-100">Gestión de reclamos ante entidades</h2>
               <p className="text-slate-300 mt-3 leading-relaxed">
-                Nos ocupamos del reclamo administrativo: armamos el caso, presentamos formalmente y damos seguimiento hasta obtener
+                Nos ocupamos del reclamo administrativo: armamos el caso, presentamos formalmente y damos seguimiento hasta
                 agotar vías administrativas, según el plan.
               </p>
               <div className="mt-5">
@@ -239,7 +240,7 @@ const services = [
               <div className="mt-5 flex flex-wrap gap-3">
                 <Button
                   className="bg-white/10 hover:bg-white/20 text-white font-semibold py-3 px-6 rounded-lg border border-white/20"
-                  onClick={() => navigate(isAuthenticated ? "/panel" : "/registro")}
+                  onClick={() => navigate("/planes")}
                 >
                   Ver planes
                 </Button>
@@ -342,7 +343,7 @@ const services = [
               <p className="text-emerald-300 uppercase tracking-[0.3em] text-xs font-semibold mb-3">Proceso</p>
               <h2 className="text-3xl md:text-4xl font-bold text-slate-100">Cómo trabajamos</h2>
               <p className="text-slate-300 mt-4 max-w-2xl mx-auto">
-                Un camino claro y ordenado para que tu reclamo avance sin fricciones.
+                Flujo simple: cargás el caso, obtenés tu ID y seguís cada avance sin depender de login de usuario.
               </p>
             </div>
             <div className="grid md:grid-cols-3 gap-6">
@@ -384,7 +385,7 @@ const services = [
           </div>
         </section>
 
-        {/* ================= GESTION DE RECLAMOS ================= */}
+        {/* ================= GESTIÓN DE RECLAMOS ================= */}
         <section className="py-20 px-6">
           <div className="max-w-6xl mx-auto">
             <div className="text-center mb-12">
@@ -446,19 +447,50 @@ const services = [
 
         {/* ================= PLANES ================= */}
         <section id="planes" className="py-20 px-6 bg-white/5 backdrop-blur-sm">
-          <div className="max-w-4xl mx-auto text-center">
+          <div className="max-w-6xl mx-auto">
+            <div className="text-center mb-10">
             <h2 className="text-3xl md:text-4xl font-bold text-emerald-300 mb-6">
-              Planes disponibles solo para usuarios registrados
+              Planes de servicio
             </h2>
             <p className="text-lg text-slate-300 mb-8">
-              Registrate o iniciá sesión para ver todos los planes y beneficios.
+              Elegí la modalidad que mejor se adapta a tu caso.
             </p>
-            <Button
-              className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold py-3 px-6 rounded-lg shadow-md transition"
-              onClick={() => navigate(isAuthenticated ? "/panel" : "/registro")}
-            >
-              Registrarme para ver planes
-            </Button>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-6 mb-8">
+              {plans.map((plan) => (
+                <div
+                  key={plan.id}
+                  className={`bg-white/95 border rounded-2xl p-6 ${
+                    plan.featured ? "border-emerald-400 shadow-2xl" : "border-white/20"
+                  }`}
+                >
+                  <p className="text-xs uppercase tracking-wide text-emerald-600 font-semibold mb-2">
+                    {plan.period}
+                  </p>
+                  <h3 className="text-xl font-bold text-slate-900 mb-2">{plan.name}</h3>
+                  {plan.priceUsd && <p className="text-slate-900 font-semibold">{plan.priceUsd}</p>}
+                  <p className="text-3xl font-extrabold text-slate-950 mb-4">{plan.price}</p>
+                  <ul className="space-y-2 text-sm text-slate-700">
+                    {plan.features.map((item) => (
+                      <li key={item}>• {item}</li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+
+            <div className="text-center">
+              <p className="text-sm text-slate-300 mb-4">
+                Para servicio para empresas, consultanos desde la sección Empresas.
+              </p>
+              <Button
+                className="bg-white/10 hover:bg-white/20 text-white border border-white/20"
+                onClick={() => navigate("/empresas")}
+              >
+                Consultar servicio para empresas
+              </Button>
+            </div>
           </div>
         </section>
 
@@ -537,15 +569,18 @@ const services = [
 
 
               </div>
+              <p className="mt-3 text-sm">
+           
+              </p>
               <div className="mt-4 space-y-1 text-sm">
                 <button className="block hover:text-emerald-300 transition" onClick={() => navigate("/terminos")}>
-                  Terminos y Condiciones
+                  Términos y Condiciones
                 </button>
                 <button className="block hover:text-emerald-300 transition" onClick={() => navigate("/privacidad")}>
-                  Politica de Privacidad
+                  Política de Privacidad
                 </button>
                 <button className="block hover:text-emerald-300 transition" onClick={() => navigate("/cookies")}>
-                  Politica de Cookies
+                  Política de Cookies
                 </button>
               </div>
             </div>

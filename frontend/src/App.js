@@ -1,16 +1,15 @@
 import "./App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
 // Componentes principales
 import RFALanding from "./components/RFALanding";
 import { Toaster } from "./components/ui/sonner";
 import Header from "./components/Header";
 import Login from "./pages/Login";
-import Register from "./pages/Register";
-import VerifyEmail from "./pages/VerifyEmail";
 import Dashboard from "./pages/Dashboard";
 import Plans from "./pages/Plans";
 import Enterprise from "./pages/Enterprise";
+import CaseLookup from "./pages/CaseLookup";
 import Terms from "./pages/Terms";
 import Privacy from "./pages/Privacy";
 import Cookies from "./pages/Cookies";
@@ -29,8 +28,10 @@ function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/login" element={<Login />} />
-            <Route path="/registro" element={<Register />} />
-            <Route path="/verificar" element={<VerifyEmail />} />
+            <Route path="/registro" element={<Navigate to="/consultar-caso" replace />} />
+            <Route path="/verificar" element={<Navigate to="/login" replace />} />
+            <Route path="/crear-caso" element={<Dashboard />} />
+            <Route path="/consultar-caso" element={<CaseLookup />} />
             <Route path="/planes" element={<Plans />} />
             <Route path="/empresas" element={<Enterprise />} />
             <Route path="/panel" element={<Dashboard />} />

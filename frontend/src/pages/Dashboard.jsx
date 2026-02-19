@@ -1,12 +1,18 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { apiRequest } from "@/lib/api";
 import { clearToken, getToken } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { plans } from "@/data/plans";
 
+const FIRST_CONTACT_PLAN = "Primer contacto (sin cargo)";
+const PUBLIC_INTAKE_EMAIL = "intake.publico@rfargentina.com";
+
 export default function Dashboard() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const token = getToken();
+  const isPublicCreateMode = !token && location.pathname === "/crear-caso";
   const [cases, setCases] = useState([]);
   const [user, setUser] = useState(null);
   const [categoria, setCategoria] = useState("");
@@ -49,6 +55,7 @@ export default function Dashboard() {
   const [savingRetention, setSavingRetention] = useState(false);
   const [expandedEnterpriseCaseDetailId, setExpandedEnterpriseCaseDetailId] = useState(null);
   const [showNewCaseForm, setShowNewCaseForm] = useState(true);
+  const [publicCaseCode, setPublicCaseCode] = useState("");
   const [adminNote, setAdminNote] = useState("");
   const [adminStatus, setAdminStatus] = useState("");
   const [adminPriority, setAdminPriority] = useState("");
@@ -61,6 +68,7 @@ export default function Dashboard() {
   const [sortDir, setSortDir] = useState("desc");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [downloadingReceiptCaseId, setDownloadingReceiptCaseId] = useState(null);
 
   const statusOptions = [
     "Recibido",
@@ -73,13 +81,13 @@ export default function Dashboard() {
     "Respuesta recibida",
     "Cerrado"
   ];
-  const enterpriseStatusOptions = ["Recibido", "En analisis", "Pendiente interno", "Cerrado"];
+  const enterpriseStatusOptions = ["Recibido", "En análisis", "Pendiente interno", "Cerrado"];
   const priorityOptions = ["Alta", "Media", "Baja"];
   const enterpriseRetentionOptions = [
     { value: "manual", label: "Manual (sin purga automatica)" },
-    { value: "30", label: "Eliminar a los 30 dias" },
-    { value: "60", label: "Eliminar a los 60 dias" },
-    { value: "90", label: "Eliminar a los 90 dias" }
+    { value: "30", label: "Eliminar a los 30 días" },
+    { value: "60", label: "Eliminar a los 60 días" },
+    { value: "90", label: "Eliminar a los 90 días" }
   ];
 
   const statusTemplates = {
@@ -87,7 +95,7 @@ export default function Dashboard() {
     "En análisis": "Estamos revisando la documentación y el relato para determinar la viabilidad.",
     "Documentación solicitada": "Te solicitamos documentación adicional para avanzar con el reclamo.",
     "Viable (pendiente de pago)":
-      "Tu caso es viable. Te enviamos una carpeta demo. Para continuar, te recomendamos Plan Gestion Basica o Plan Completo.",
+      "Tu caso es viable. Te enviamos una carpeta demo. Para continuar, te recomendamos Plan Gestión Básica o Plan Completo.",
     "No viable": "Luego de analizar la información, el caso no resulta viable por el momento.",
     "Presentado ante entidad": "Reclamo presentado formalmente ante la entidad. Seguimos el proceso.",
     "En espera de respuesta": "El reclamo ya fue enviado. Estamos esperando respuesta de la entidad.",
@@ -111,13 +119,12 @@ export default function Dashboard() {
   };
 
   const BANK_TRANSFER = {
-    titular: "Reclamos Financieros Argentina",
-    banco: "Banco Galicia",
-    cbu: "0000003100000000000000",
-    alias: "RFA.RECLAMOS.ARG",
+    titular: "Matias Hernan Masdeu",
+    banco: "Banco Supervielle",
+    cbu: "0270053320052964280015",
+    alias: "MATIASHERNAN.M",
     referencia: "Indica tu email y plan elegido en el comprobante"
   };
-
   const isNewCase = (c) => {
     if (!c) return false;
     return c.estado === "Recibido";
@@ -163,6 +170,7 @@ export default function Dashboard() {
     return plan.includes("plan completo");
   });
   const canCreateCase = !hasActiveCase || hasMultipleCasesPlan;
+  const canSubmitCase = isPublicCreateMode ? true : canCreateCase;
 
   const adminFilteredCases = useMemo(() => {
     if (!isAdmin) return cases;
@@ -215,6 +223,10 @@ export default function Dashboard() {
     const start = (page - 1) * pageSize;
     return sortedCases.slice(start, start + pageSize);
   }, [sortedCases, page, pageSize, isAdmin]);
+  const adminPaymentCases = useMemo(
+    () => (isAdmin ? sortedCases.filter((c) => c.payment_receipt_filename) : []),
+    [sortedCases, isAdmin]
+  );
 
   const visibleCases = isAdmin ? sortedCases : cases;
   const enterpriseVisibleCases = useMemo(() => {
@@ -283,6 +295,7 @@ export default function Dashboard() {
     const map = {
       Recibido: "border-slate-400/50 bg-slate-500/20",
       "En analisis": "border-sky-400/60 bg-sky-500/20",
+      "En análisis": "border-sky-400/60 bg-sky-500/20",
       "Pendiente interno": "border-amber-400/60 bg-amber-500/20",
       Cerrado: "border-slate-400/60 bg-slate-500/20"
     };
@@ -303,12 +316,16 @@ export default function Dashboard() {
 
 
   useEffect(() => {
-    if (!getToken()) {
+    if (!token) {
+      if (isPublicCreateMode) {
+        setLoading(false);
+        return;
+      }
       navigate("/login");
       return;
     }
     loadCases();
-  }, []);
+  }, [token, isPublicCreateMode, navigate]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -498,7 +515,7 @@ export default function Dashboard() {
       c.case_code || "",
       c.empresa || c.enterprise_email || "",
       c.nombre_completo || "",
-      c.email_contacto || c.user_email || "",
+      getCaseContactEmail(c) || "",
       c.entidad || "",
       c.plan_elegido || "",
       c.estado || "",
@@ -508,7 +525,9 @@ export default function Dashboard() {
       c.monto_valor || "",
       c.created_at || ""
     ]);
-    const csv = [headers, ...rows].map((row) => row.map(escapeCell).join(",")).join("\n");
+    const csvBody = [headers, ...rows].map((row) => row.map(escapeCell).join(",")).join("\r\n");
+    // BOM + "sep=," mejora compatibilidad con Excel/Sheets y evita problemas de tildes.
+    const csv = `\uFEFFsep=,\r\n${csvBody}`;
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -520,14 +539,58 @@ export default function Dashboard() {
     URL.revokeObjectURL(url);
   };
 
+  const getCaseContactEmail = (caseItem) => {
+    const emailContacto = String(caseItem?.email_contacto || "").trim();
+    if (emailContacto) return emailContacto;
+    const userEmail = String(caseItem?.user_email || "").trim();
+    if (!userEmail || userEmail.toLowerCase() === PUBLIC_INTAKE_EMAIL) return "";
+    return userEmail;
+  };
+
+  const handleDownloadPaymentReceipt = async (caseItem) => {
+    if (!caseItem?.id) return;
+    setDownloadingReceiptCaseId(caseItem.id);
+    try {
+      const tokenValue = getToken();
+      const apiBase = process.env.REACT_APP_BACKEND_URL ? `${process.env.REACT_APP_BACKEND_URL}/api` : "/api";
+      const response = await fetch(`${apiBase}/cases/${encodeURIComponent(caseItem.id)}/payment-receipt`, {
+        headers: tokenValue ? { Authorization: `Bearer ${tokenValue}` } : {},
+        credentials: "include"
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || "No se pudo descargar el comprobante");
+      }
+      const blob = await response.blob();
+      const fileUrl = URL.createObjectURL(blob);
+      const downloadName = caseItem.payment_receipt_original_name || `comprobante_${caseItem.case_code || caseItem.id}`;
+      const link = document.createElement("a");
+      link.href = fileUrl;
+      link.download = downloadName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(fileUrl);
+    } catch (err) {
+      setError(err.message || "No se pudo descargar el comprobante");
+    } finally {
+      setDownloadingReceiptCaseId(null);
+    }
+  };
+
   const handleCreateCase = async (event) => {
     event.preventDefault();
-    if (!canCreateCase) {
+    if (!canSubmitCase) {
       setError("Solo podés cargar un nuevo reclamo si tenés Plan Completo.");
+      return;
+    }
+    if (!String(emailContacto || "").trim() && !String(dniCuit || "").trim()) {
+      setError("Debes completar email o DNI/CUIT para poder consultar el caso luego.");
       return;
     }
     setSubmitting(true);
     setError("");
+    setPublicCaseCode("");
     try {
       const formData = new FormData();
       formData.append("categoria", categoria);
@@ -546,7 +609,8 @@ export default function Dashboard() {
       formData.append("autorizacion", autorizacion ? "true" : "false");
       Array.from(adjuntos || []).forEach((file) => formData.append("adjuntos", file));
 
-      await apiRequest("/cases", {
+      const endpoint = isPublicCreateMode ? "/public/cases" : "/cases";
+      const created = await apiRequest(endpoint, {
         method: "POST",
         body: formData
       });
@@ -565,7 +629,11 @@ export default function Dashboard() {
       setRelato("");
       setAutorizacion(false);
       setAdjuntos([]);
-      await loadCases();
+      if (isPublicCreateMode) {
+        setPublicCaseCode(created?.case_code || "");
+      } else {
+        await loadCases();
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -617,7 +685,7 @@ export default function Dashboard() {
       await apiRequest(`/cases/${caseId}/updates`, {
         method: "POST",
         body: JSON.stringify({
-          mensaje: "Actualizacion interna de empresa.",
+          mensaje: "Actualización interna de empresa.",
           estado: nextStatus || null,
           prioridad: nextPriority || null
         })
@@ -655,7 +723,7 @@ export default function Dashboard() {
       });
       setEnterpriseRetentionSaved(saved || null);
     } catch (err) {
-      setError(err.message || "No se pudo guardar la politica de purga.");
+      setError(err.message || "No se pudo guardar la política de purga.");
     } finally {
       setSavingRetention(false);
     }
@@ -717,18 +785,26 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen text-slate-100 px-6 py-16 pt-24">
-      <div className="max-w-6xl mx-auto">
+    <div className="min-h-screen text-slate-100 px-4 md:px-6 py-16 pt-24">
+      <div className="max-w-[92rem] mx-auto">
         <div className="flex flex-wrap items-center justify-between gap-4 mb-10">
           <div>
             <h1 className="text-3xl font-bold">Panel de casos</h1>
             <p className="text-slate-300">
-              {isAdmin ? "Panel administrador: revisa y actualiza todos los reclamos." : isEnterprise ? "Panel empresa: organiza y clasifica casos con estado y prioridad." : "Carga nuevos reclamos y sigue el estado."}
+              {isPublicCreateMode
+                ? "Completa el formulario para crear tu caso y obtener tu ID de seguimiento."
+                : isAdmin
+                  ? "Panel administrador: revisa y actualiza todos los reclamos."
+                  : isEnterprise
+                    ? "Panel empresa: organiza y clasifica casos con estado y prioridad."
+                    : "Carga nuevos reclamos y sigue el estado."}
             </p>
           </div>
-          <Button onClick={handleLogout} className="bg-white/10 hover:bg-white/20 text-white">
-            Cerrar sesión
-          </Button>
+          {!isPublicCreateMode && (
+            <Button onClick={handleLogout} className="bg-white/10 hover:bg-white/20 text-white">
+              Cerrar sesión
+            </Button>
+          )}
         </div>
 
         <div className={`grid gap-8 ${isAdmin ? "md:grid-cols-1" : "md:grid-cols-1"}`}>
@@ -747,7 +823,7 @@ export default function Dashboard() {
                 {showNewCaseForm ? "Ocultar" : "Mostrar"}
               </Button>
             </div>
-            {!canCreateCase && (
+            {!canSubmitCase && (
               <div className="mb-4 rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
                 Ya tenés un reclamo activo. Para cargar uno nuevo necesitás Plan Completo.
               </div>
@@ -761,7 +837,7 @@ export default function Dashboard() {
                 className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
                 value={nombreCompleto}
                 onChange={(e) => setNombreCompleto(e.target.value)}
-                disabled={!canCreateCase}
+                disabled={!canSubmitCase}
                 required
               />
               <div className="grid md:grid-cols-2 gap-3">
@@ -772,7 +848,7 @@ export default function Dashboard() {
                   className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
                   value={dniCuit}
                   onChange={(e) => setDniCuit(e.target.value)}
-                  disabled={!canCreateCase}
+                  disabled={!canSubmitCase}
                 />
                 <input
                   type="email"
@@ -780,8 +856,7 @@ export default function Dashboard() {
                   className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
                   value={emailContacto}
                   onChange={(e) => setEmailContacto(e.target.value)}
-                  disabled={!canCreateCase}
-                  required
+                  disabled={!canSubmitCase}
                 />
               </div>
               <input
@@ -790,7 +865,7 @@ export default function Dashboard() {
                 className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
                 value={telefono}
                 onChange={(e) => setTelefono(e.target.value)}
-                disabled={!canCreateCase}
+                disabled={!canSubmitCase}
               />
               <input
                 type="text"
@@ -799,14 +874,14 @@ export default function Dashboard() {
                 className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
                 value={entidad}
                 onChange={(e) => setEntidad(e.target.value)}
-                disabled={!canCreateCase}
+                disabled={!canSubmitCase}
               />
               <select
                 className="w-full rounded-lg bg-slate-900/70 border border-white/20 px-4 py-3 text-white"
                 aria-label="Tipo de entidad"
                 value={tipoEntidad}
                 onChange={(e) => setTipoEntidad(e.target.value)}
-                disabled={!canCreateCase}
+                disabled={!canSubmitCase}
               >
                 <option value="">Tipo de entidad</option>
                 <option value="Banco tradicional">Banco tradicional</option>
@@ -824,14 +899,14 @@ export default function Dashboard() {
                   className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
                   value={montoValor}
                   onChange={(e) => setMontoValor(e.target.value)}
-                  disabled={!canCreateCase}
+                  disabled={!canSubmitCase}
                 />
                 <select
                   className="w-full rounded-lg bg-slate-900/70 border border-white/20 px-4 py-3 text-white"
                   aria-label="Escala de monto"
                   value={montoEscala}
                   onChange={(e) => setMontoEscala(e.target.value)}
-                  disabled={!canCreateCase}
+                  disabled={!canSubmitCase}
                 >
                   <option value="">Escala</option>
                   <option value="Cientos">Cientos</option>
@@ -843,7 +918,7 @@ export default function Dashboard() {
                   aria-label="Moneda"
                   value={montoMoneda}
                   onChange={(e) => setMontoMoneda(e.target.value)}
-                  disabled={!canCreateCase}
+                  disabled={!canSubmitCase}
                 >
                   <option value="">Moneda</option>
                   <option value="ARS">Peso (ARS)</option>
@@ -855,21 +930,22 @@ export default function Dashboard() {
                 aria-label="Plan elegido"
                 value={planElegido}
                 onChange={(e) => setPlanElegido(e.target.value)}
-                disabled={!canCreateCase}
+                disabled={!canSubmitCase}
               >
                 <option value="">Elegir plan</option>
+                <option value={FIRST_CONTACT_PLAN}>{FIRST_CONTACT_PLAN}</option>
                 {plans.map((plan) => (
                   <option key={plan.id} value={plan.name}>{plan.name}</option>
                 ))}
               </select>
               <div className="space-y-2">
                 <p className="text-sm text-slate-300">Medios de pago</p>
-                {["Transferencia bancaria", "Tarjeta de crédito", "Tarjeta de débito", "Código QR", "PayPal", "Otros"].map((medio) => (
+                {["Transferencia bancaria", "Tarjeta de crédito", "Tarjeta de débito", "PayPal", "Otros"].map((medio) => (
                   <label key={medio} className="flex items-center gap-2 text-sm text-slate-300">
                     <input
                       type="checkbox"
                       checked={mediosPago.includes(medio)}
-                      disabled={!canCreateCase}
+                      disabled={!canSubmitCase}
                       onChange={(e) => {
                         if (e.target.checked) {
                           setMediosPago((prev) => [...prev, medio]);
@@ -887,7 +963,7 @@ export default function Dashboard() {
                 className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400 min-h-[160px]"
                 value={relato}
                 onChange={(e) => setRelato(e.target.value)}
-                disabled={!canCreateCase}
+                disabled={!canSubmitCase}
                 required
               />
               <input
@@ -896,24 +972,29 @@ export default function Dashboard() {
                 multiple
                 className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white"
                 onChange={(e) => setAdjuntos(e.target.files)}
-                disabled={!canCreateCase}
+                disabled={!canSubmitCase}
               />
               <label className="flex items-start gap-2 text-sm text-slate-300">
                 <input
                   type="checkbox"
                   checked={autorizacion}
                   onChange={(e) => setAutorizacion(e.target.checked)}
-                  disabled={!canCreateCase}
+                  disabled={!canSubmitCase}
                   required
                 />
                 Autorizo a RFA a realizar gestiones administrativas y comunicaciones en mi nombre con el único fin de
                 resolver el reclamo informado.
               </label>
+              {publicCaseCode && (
+                <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+                  Caso cargado. Guarda tu ID de seguimiento: <strong>{publicCaseCode}</strong>
+                </div>
+              )}
               {error && <p className="text-rose-300 text-sm">{error}</p>}
               <Button
                 type="submit"
                 className="w-full bg-emerald-500 hover:bg-emerald-600 text-white"
-                disabled={submitting || !canCreateCase}
+                disabled={submitting || !canSubmitCase}
               >
                 {submitting ? "Enviando..." : "Enviar reclamo"}
               </Button>
@@ -951,6 +1032,7 @@ export default function Dashboard() {
                     onChange={(e) => setFilterPlan(e.target.value)}
                   >
                     <option value="">Plan</option>
+                    <option value={FIRST_CONTACT_PLAN}>{FIRST_CONTACT_PLAN}</option>
                     {plans.map((plan) => (
                       <option key={plan.id} value={plan.name}>{plan.name}</option>
                     ))}
@@ -1076,7 +1158,7 @@ export default function Dashboard() {
             {!loading && isAdmin && sortedCases.length > 0 && (
               <div className="bg-white/10 border border-white/10 rounded-2xl overflow-hidden">
                 <div className="overflow-auto">
-                  <table className="w-full min-w-[1180px] border-collapse">
+                  <table className="w-full min-w-[1080px] border-collapse">
                     <thead>
                       <tr className="text-left text-xs uppercase tracking-wide text-slate-300 border-b border-white/10">
                         <th className="px-4 py-3">
@@ -1138,7 +1220,7 @@ export default function Dashboard() {
                             <td className="px-4 py-3 text-sm text-slate-200">{c.case_code || "-"}</td>
                             <td className="px-4 py-3 text-sm text-slate-200">{c.empresa || c.enterprise_email || "-"}</td>
                             <td className="px-4 py-3">
-                              <p className="text-sm text-slate-200">{c.user_email || c.email_contacto || "Sin email"}</p>
+                              <p className="text-sm text-slate-200">{getCaseContactEmail(c) || "Sin email"}</p>
                               <p className="text-xs text-slate-400">{c.telefono || "-"}</p>
                             </td>
                             <td className="px-4 py-3">
@@ -1193,7 +1275,7 @@ export default function Dashboard() {
                                   <div className="space-y-2">
                                     <div>
                                       <p className="text-slate-400 text-xs uppercase mb-1">Contacto</p>
-                                      <p>{c.email_contacto || c.user_email || "-"}</p>
+                                      <p>{getCaseContactEmail(c) || "-"}</p>
                                       <p className="text-xs text-slate-400">{c.telefono || "-"}</p>
                                     </div>
                                     <div>
@@ -1334,6 +1416,7 @@ export default function Dashboard() {
                             <p><strong>CBU:</strong> {BANK_TRANSFER.cbu}</p>
                             <p><strong>Alias:</strong> {BANK_TRANSFER.alias}</p>
                             <p className="text-emerald-200/90">{BANK_TRANSFER.referencia}</p>
+
                           </div>
                         )}
                         {infoPlanId === c.id && (
@@ -1359,7 +1442,7 @@ export default function Dashboard() {
             {!loading && isEnterprise && (
               <div className="space-y-4">
                 <div className="bg-white/10 border border-white/10 rounded-2xl p-4">
-                  <h3 className="text-base font-semibold">Politica de retencion de datos</h3>
+                  <h3 className="text-base font-semibold">Política de retención de datos</h3>
                   <p className="text-xs text-slate-300 mt-1">
                     Para mayor seguridad, podes definir la eliminacion automatica de casos cerrados.
                   </p>
@@ -1383,16 +1466,16 @@ export default function Dashboard() {
                       onClick={handleSaveEnterpriseRetention}
                       disabled={savingRetention}
                     >
-                      {savingRetention ? "Guardando..." : "Guardar politica"}
+                      {savingRetention ? "Guardando..." : "Guardar política"}
                     </Button>
                   </div>
                   <p className="text-[11px] text-slate-400 mt-2">
-                    La purga aplica solo sobre casos cerrados del panel activo. Los backups siguen su propia rotacion tecnica.
+                    La purga aplica solo sobre casos cerrados del panel activo. Los backups siguen su propia rotación técnica.
                   </p>
                   {enterpriseRetentionSaved && (
                     <p className="text-[11px] text-emerald-200 mt-2">
                       Configuracion vigente: {enterpriseRetentionSaved.retention_mode === "auto"
-                        ? `${enterpriseRetentionSaved.retention_days} dias`
+                        ? `${enterpriseRetentionSaved.retention_days} días`
                         : "manual"}.
                     </p>
                   )}
@@ -1533,7 +1616,7 @@ export default function Dashboard() {
                                       )}
                                       {(updates[c.id] || []).map((u) => (
                                         <div key={u.id} className="rounded-lg border border-white/10 bg-white/5 p-3">
-                                          <p className="text-xs text-slate-300">{u.mensaje || "Actualizacion registrada"}</p>
+                                          <p className="text-xs text-slate-300">{u.mensaje || "Actualización registrada"}</p>
                                           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-400">
                                             {u.estado && (
                                               <span className={`inline-flex px-2 py-0.5 rounded-full ${getStatusBadge(u.estado)}`}>
@@ -1545,7 +1628,7 @@ export default function Dashboard() {
                                                 {u.prioridad}
                                               </span>
                                             )}
-                                            <span>{u.author_email ? `Actualizado por ${u.author_email}` : "Actualizacion registrada"}</span>
+                                            <span>{u.author_email ? `Actualizado por ${u.author_email}` : "Actualización registrada"}</span>
                                             <span>{new Date(u.created_at).toLocaleString("es-AR")}</span>
                                           </div>
                                         </div>
@@ -1709,6 +1792,7 @@ export default function Dashboard() {
                           <p><strong>CBU:</strong> {BANK_TRANSFER.cbu}</p>
                           <p><strong>Alias:</strong> {BANK_TRANSFER.alias}</p>
                           <p className="text-emerald-200/90">{BANK_TRANSFER.referencia}</p>
+
                         </div>
                       )}
                       {infoPlanId === c.id && (
@@ -1771,6 +1855,54 @@ export default function Dashboard() {
                 </div>
               );
             })()}
+
+            {!loading && isAdmin && (
+              <div className="bg-white/10 border border-white/10 rounded-2xl p-5 space-y-4">
+                <h2 className="text-xl font-semibold">Comprobantes y pagos</h2>
+                {adminPaymentCases.length === 0 ? (
+                  <p className="text-slate-300 text-sm">Todavía no hay comprobantes cargados.</p>
+                ) : (
+                  <div className="overflow-auto">
+                    <table className="w-full min-w-[900px] border-collapse">
+                      <thead>
+                        <tr className="text-left text-xs uppercase tracking-wide text-slate-300 border-b border-white/10">
+                          <th className="px-4 py-3">Código</th>
+                          <th className="px-4 py-3">Cliente</th>
+                          <th className="px-4 py-3">Email</th>
+                          <th className="px-4 py-3">Plan</th>
+                          <th className="px-4 py-3">Cargado</th>
+                          <th className="px-4 py-3">Acción</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {adminPaymentCases.map((c) => (
+                          <tr key={`payment-${c.id}`} className="border-b border-white/10">
+                            <td className="px-4 py-3 text-sm text-slate-200">{c.case_code || c.id}</td>
+                            <td className="px-4 py-3 text-sm text-slate-100">{c.nombre_completo || "Sin nombre"}</td>
+                            <td className="px-4 py-3 text-sm text-slate-200">{getCaseContactEmail(c) || "-"}</td>
+                            <td className="px-4 py-3 text-sm text-slate-200">{c.plan_elegido || "-"}</td>
+                            <td className="px-4 py-3 text-xs text-slate-400">
+                              {c.payment_receipt_uploaded_at
+                                ? new Date(c.payment_receipt_uploaded_at).toLocaleString("es-AR")
+                                : "-"}
+                            </td>
+                            <td className="px-4 py-3">
+                              <Button
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                                onClick={() => handleDownloadPaymentReceipt(c)}
+                                disabled={downloadingReceiptCaseId === c.id}
+                              >
+                                {downloadingReceiptCaseId === c.id ? "Descargando..." : "Descargar comprobante"}
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
 
             {!loading && isAdmin && (
               <div className="bg-white/10 border border-white/10 rounded-2xl p-5 space-y-4">

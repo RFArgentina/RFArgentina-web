@@ -27,7 +27,7 @@ export default function VerifyEmail() {
           navigate("/panel");
           return;
         }
-        setStatus(data.message || "Email verificado. Ya podes iniciar sesion.");
+        setStatus(data.message || "Email verificado. Ya podés iniciar sesión.");
       })
       .catch((err) => {
         if (!active) return;
@@ -43,7 +43,7 @@ export default function VerifyEmail() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 px-6 py-16 pt-24 flex items-center justify-center">
       <div className="w-full max-w-xl bg-white border border-slate-200 rounded-2xl p-8 shadow-xl text-center">
-        <h1 className="text-2xl font-bold mb-3">Verificacion de email</h1>
+        <h1 className="text-2xl font-bold mb-3">Verificación de email</h1>
         {status && <p className="text-slate-600 mb-6">{status}</p>}
         {error && <p className="text-rose-600 mb-6">{error}</p>}
         <div className="flex justify-center gap-3">

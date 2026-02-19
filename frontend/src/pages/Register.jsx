@@ -39,11 +39,11 @@ export default function Register() {
     setSuccess("");
     setResendStatus("");
     if (password !== confirmPassword) {
-      setError("Las contrasenas no coinciden.");
+      setError("Las contraseñas no coinciden.");
       return;
     }
     if (!acceptLegal) {
-      setError("Debes aceptar los Terminos y la Politica de Privacidad.");
+      setError("Debes aceptar los Términos y la Política de Privacidad.");
       return;
     }
     setLoading(true);
@@ -55,7 +55,7 @@ export default function Register() {
       setSuccess(data.message || "Registro creado. Revisa tu email para verificar la cuenta.");
     } catch (err) {
       if (err.code === "EMAIL_SERVICE_NOT_CONFIGURED") {
-        setError("El servicio de verificacion por email no esta configurado. Contacta al administrador.");
+        setError("El servicio de verificación por email no está configurado. Contacta al administrador.");
       } else {
         setError(err.message);
       }
@@ -108,7 +108,7 @@ export default function Register() {
           <p className="text-slate-600 mb-6">Registrate para acceder a los planes y al seguimiento.</p>
           {!emailVerificationEnabled && (
             <p className="text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4 text-sm">
-              La verificacion por email esta desactivada en este entorno.
+              La verificación por email está desactivada en este entorno.
             </p>
           )}
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -126,12 +126,12 @@ export default function Register() {
               />
             </div>
             <div>
-              <label className="block text-sm text-slate-700" htmlFor="register-password">Contrasena</label>
+              <label className="block text-sm text-slate-700" htmlFor="register-password">Contraseña</label>
               <div className="relative mt-2">
                 <input
                   id="register-password"
                   type={showPassword ? "text" : "password"}
-                  placeholder="Crea una contrasena"
+                  placeholder="Crea una contraseña"
                   autoComplete="new-password"
                   className="w-full rounded-lg bg-white border border-slate-200 px-4 py-3 pr-20 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
                   value={password}
@@ -148,12 +148,12 @@ export default function Register() {
               </div>
             </div>
             <div>
-              <label className="block text-sm text-slate-700" htmlFor="register-password-confirm">Confirmar contrasena</label>
+              <label className="block text-sm text-slate-700" htmlFor="register-password-confirm">Confirmar contraseña</label>
               <div className="relative mt-2">
                 <input
                   id="register-password-confirm"
                   type={showConfirmPassword ? "text" : "password"}
-                  placeholder="Repeti tu contrasena"
+                  placeholder="Repetí tu contraseña"
                   autoComplete="new-password"
                   className="w-full rounded-lg bg-white border border-slate-200 px-4 py-3 pr-20 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
                   value={confirmPassword}
@@ -177,8 +177,8 @@ export default function Register() {
                 onChange={(e) => setAcceptLegal(e.target.checked)}
               />
               <span>
-                Acepto los <Link to="/terminos" className="text-emerald-700 font-semibold">Terminos y Condiciones</Link> y la{" "}
-                <Link to="/privacidad" className="text-emerald-700 font-semibold">Politica de Privacidad</Link>.
+                Acepto los <Link to="/terminos" className="text-emerald-700 font-semibold">Términos y Condiciones</Link> y la{" "}
+                <Link to="/privacidad" className="text-emerald-700 font-semibold">Política de Privacidad</Link>.
               </span>
             </label>
             {error && <p className="text-rose-600 text-sm">{error}</p>}
@@ -197,7 +197,7 @@ export default function Register() {
           <p className="text-sm text-slate-600 mt-6">
             Ya tenes cuenta?{" "}
             <Link to="/login" className="text-emerald-600 hover:text-emerald-700 font-semibold">
-              Iniciar sesion
+              Iniciar sesión
             </Link>
           </p>
           <div className="mt-4">
@@ -207,7 +207,7 @@ export default function Register() {
               onClick={handleResend}
               disabled={resending || !email || !emailVerificationEnabled}
             >
-              {resending ? "Reenviando..." : "Reenviar email de verificacion"}
+              {resending ? "Reenviando..." : "Reenviar email de verificación"}
             </Button>
           </div>
         </div>

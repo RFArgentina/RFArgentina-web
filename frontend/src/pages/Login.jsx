@@ -9,14 +9,12 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [hint, setHint] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError("");
-    setHint("");
     setLoading(true);
     try {
       const data = await apiRequest("/auth/login", {
@@ -27,8 +25,9 @@ export default function Login() {
       navigate("/panel");
     } catch (err) {
       if (err.code === "EMAIL_NOT_VERIFIED") {
-        setError("Tu email no esta verificado. Revisa tu bandeja y verifica la cuenta desde el email de registro.");
-        setHint("Si no te llego el correo, vuelve a la pantalla de registro y usa 'Reenviar email de verificacion'.");
+        setError("No se pudo iniciar sesion con esas credenciales.");
+      } else if (err.code === "USER_PORTAL_DISABLED") {
+        setError("El acceso de particulares se realiza desde 'Consultar caso' con email + ID de caso.");
       } else {
         setError(err.message);
       }
@@ -60,8 +59,8 @@ export default function Login() {
           </div>
         </div>
         <div className="bg-white border border-slate-200 rounded-2xl p-8 shadow-xl">
-          <h1 className="text-3xl font-bold mb-2">Iniciar sesion</h1>
-          <p className="text-slate-600 mb-6">Accede a tus casos y seguimiento.</p>
+          <h1 className="text-3xl font-bold mb-2">Iniciar sesión</h1>
+          <p className="text-slate-600 mb-6">Acceso exclusivo para empresas y administración.</p>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm text-slate-700" htmlFor="login-email">Email</label>
@@ -77,12 +76,12 @@ export default function Login() {
               />
             </div>
             <div>
-              <label className="block text-sm text-slate-700" htmlFor="login-password">Contrasena</label>
+              <label className="block text-sm text-slate-700" htmlFor="login-password">Contraseña</label>
               <div className="relative mt-2">
                 <input
                   id="login-password"
                   type={showPassword ? "text" : "password"}
-                  placeholder="Tu contrasena"
+                  placeholder="Tu contraseña"
                   autoComplete="current-password"
                   className="w-full rounded-lg bg-white border border-slate-200 px-4 py-3 pr-20 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
                   value={password}
@@ -99,7 +98,6 @@ export default function Login() {
               </div>
             </div>
             {error && <p className="text-rose-600 text-sm">{error}</p>}
-            {hint && <p className="text-slate-600 text-sm">{hint}</p>}
             <Button
               type="submit"
               className="w-full bg-emerald-600 hover:bg-emerald-700 text-white"
@@ -108,11 +106,9 @@ export default function Login() {
               {loading ? "Ingresando..." : "Ingresar"}
             </Button>
           </form>
-          <p className="text-sm text-slate-600 mt-6">
-            No tenes cuenta?{" "}
-            <Link to="/registro" className="text-emerald-600 hover:text-emerald-700 font-semibold">
-              Crear cuenta
-            </Link>
+          <p className="text-xs text-slate-500 mt-6">
+            Si sos particular, consulta avances desde{" "}
+            <Link to="/consultar-caso" className="text-emerald-700 font-semibold">Consultar caso</Link>.
           </p>
         </div>
       </div>

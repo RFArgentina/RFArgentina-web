@@ -55,12 +55,20 @@ export default function Header() {
 
         <div className="flex items-center gap-4">
           {!isAuthenticated ? (
-            <Link
-              to="/login"
-              className="hidden md:inline-flex items-center px-4 py-2 rounded-lg border border-white/20 hover:border-emerald-300 text-white transition"
-            >
-              Ingresar
-            </Link>
+            <>
+              <Link
+                to="/consultar-caso"
+                className="hidden md:inline-flex items-center px-4 py-2 rounded-lg border border-white/20 hover:border-emerald-300 text-white transition"
+              >
+                Consultar caso
+              </Link>
+              <Link
+                to="/login"
+                className="hidden md:inline-flex items-center px-4 py-2 rounded-lg border border-white/20 hover:border-emerald-300 text-white transition"
+              >
+                Acceso empresas
+              </Link>
+            </>
           ) : (
             <>
               <Link
@@ -103,9 +111,14 @@ export default function Header() {
             Contacto
           </button>
           {!isAuthenticated ? (
-            <Link to="/login" className="block hover:text-emerald-300 transition" onClick={() => setMenuOpen(false)}>
-              Ingresar
-            </Link>
+            <>
+              <Link to="/consultar-caso" className="block hover:text-emerald-300 transition" onClick={() => setMenuOpen(false)}>
+                Consultar caso
+              </Link>
+              <Link to="/login" className="block hover:text-emerald-300 transition" onClick={() => setMenuOpen(false)}>
+                Acceso empresas
+              </Link>
+            </>
           ) : (
             <>
               <Link to="/panel" className="block hover:text-emerald-300 transition" onClick={() => setMenuOpen(false)}>

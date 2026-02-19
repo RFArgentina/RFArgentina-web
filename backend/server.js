@@ -29,11 +29,14 @@ const JWT_SECRET = process.env.JWT_SECRET || "";
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "").split(",").map((v) => v.trim().toLowerCase()).filter(Boolean);
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || "";
 const EMAIL_FROM = process.env.EMAIL_FROM || "";
+const EMAIL_AUTOMATIC_ENABLED = String(process.env.EMAIL_AUTOMATIC_ENABLED || "false").toLowerCase() === "true";
 const CAN_SEND_EMAIL = Boolean(SENDGRID_API_KEY && EMAIL_FROM);
-const AUTH_REQUIRE_EMAIL_VERIFICATION = String(
+const CAN_SEND_AUTOMATIC_EMAIL = CAN_SEND_EMAIL && EMAIL_AUTOMATIC_ENABLED;
+const AUTH_REQUIRE_EMAIL_VERIFICATION_RAW = String(
   process.env.AUTH_REQUIRE_EMAIL_VERIFICATION ?? "false"
 ).toLowerCase() === "true";
-const EMAIL_VERIFICATION_ENABLED = AUTH_REQUIRE_EMAIL_VERIFICATION && CAN_SEND_EMAIL;
+const AUTH_REQUIRE_EMAIL_VERIFICATION = AUTH_REQUIRE_EMAIL_VERIFICATION_RAW && CAN_SEND_AUTOMATIC_EMAIL;
+const EMAIL_VERIFICATION_ENABLED = AUTH_REQUIRE_EMAIL_VERIFICATION && CAN_SEND_AUTOMATIC_EMAIL;
 const APP_BASE_URL = process.env.APP_BASE_URL || "http://localhost:3000";
 const SQLITE_PATH = process.env.SQLITE_PATH || "./rfa.db";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -122,8 +125,8 @@ function validateRuntimeSecurityConfig() {
     issues.push("REFRESH_TOKEN_SAME_SITE=none requiere REFRESH_TOKEN_SECURE_COOKIE=true");
   }
 
-  if (AUTH_REQUIRE_EMAIL_VERIFICATION && !CAN_SEND_EMAIL) {
-    issues.push("AUTH_REQUIRE_EMAIL_VERIFICATION=true requiere SENDGRID_API_KEY y EMAIL_FROM");
+  if (AUTH_REQUIRE_EMAIL_VERIFICATION_RAW && !CAN_SEND_AUTOMATIC_EMAIL) {
+    issues.push("AUTH_REQUIRE_EMAIL_VERIFICATION=true requiere EMAIL_AUTOMATIC_ENABLED=true, SENDGRID_API_KEY y EMAIL_FROM");
   }
 
   if (!Number.isFinite(USER_RETENTION_DAYS) || USER_RETENTION_DAYS < 30 || USER_RETENTION_DAYS > 365) {
@@ -236,7 +239,7 @@ let db = null;
 let server = null;
 let shuttingDown = false;
 
-if (SENDGRID_API_KEY) {
+if (CAN_SEND_AUTOMATIC_EMAIL) {
   sgMail.setApiKey(SENDGRID_API_KEY);
 }
 
@@ -500,6 +503,9 @@ function initDb() {
   addColumn("fecha_caso", "TEXT");
   addColumn("canal_origen", "TEXT");
   addColumn("enterprise_user_id", "TEXT");
+  addColumn("payment_receipt_filename", "TEXT");
+  addColumn("payment_receipt_original_name", "TEXT");
+  addColumn("payment_receipt_uploaded_at", "TEXT");
   const updatesColumns = all("PRAGMA table_info(case_updates)").map((c) => c.name);
   if (!updatesColumns.includes("prioridad")) {
     db.exec("ALTER TABLE case_updates ADD COLUMN prioridad TEXT;");
@@ -645,6 +651,17 @@ function deleteCaseAttachments(rows = []) {
         }
       }
     });
+    const paymentReceiptFilename = path.basename(String(row?.payment_receipt_filename || "").trim());
+    if (paymentReceiptFilename) {
+      const paymentReceiptPath = path.join(UPLOADS_DIR, paymentReceiptFilename);
+      if (fs.existsSync(paymentReceiptPath)) {
+        try {
+          fs.unlinkSync(paymentReceiptPath);
+        } catch (err) {
+          console.error("PURGE PAYMENT RECEIPT ERR:", paymentReceiptFilename, err.message);
+        }
+      }
+    }
   });
 }
 
@@ -656,7 +673,7 @@ function purgeExpiredClosedCases() {
   };
 
   const userRows = all(
-    `SELECT id, adjuntos
+    `SELECT id, adjuntos, payment_receipt_filename
      FROM cases
      WHERE estado = 'Cerrado'
        AND enterprise_user_id IS NULL
@@ -665,7 +682,7 @@ function purgeExpiredClosedCases() {
   );
 
   const enterpriseRows = all(
-    `SELECT c.id, c.adjuntos
+    `SELECT c.id, c.adjuntos, c.payment_receipt_filename
      FROM cases c
      JOIN enterprise_retention_settings ers ON ers.enterprise_user_id = c.enterprise_user_id
      WHERE c.estado = 'Cerrado'
@@ -717,6 +734,11 @@ const enterpriseInquirySchema = z.object({
   comentarios: z.union([z.string().trim().max(2000), z.null(), z.undefined()])
 });
 
+const publicCaseLookupSchema = z.object({
+  case_id: z.string().trim().min(6).max(80),
+  identifier: z.string().trim().min(3).max(180)
+});
+
 const caseCreateSchema = z.object({
   categoria: z.union([z.string().trim().max(120), z.null(), z.undefined()]),
   nombre_completo: z.union([z.string().trim().max(120), z.null(), z.undefined()]),
@@ -735,6 +757,18 @@ const caseCreateSchema = z.object({
   detalle: z.union([z.string().trim().max(4000), z.null(), z.undefined()])
 });
 
+const publicCaseCreateSchema = caseCreateSchema.superRefine((data, ctx) => {
+  const hasEmail = isNonEmptyString(data?.email_contacto);
+  const hasDni = isNonEmptyString(data?.dni_cuit);
+  if (!hasEmail && !hasDni) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["email_contacto"],
+      message: "Debes indicar email o DNI/CUIT"
+    });
+  }
+});
+
 const caseUpdateSchema = z.object({
   mensaje: z.union([z.string().trim().max(3000), z.null(), z.undefined()]),
   estado: z.union([z.string().trim().max(120), z.null(), z.undefined()]),
@@ -745,6 +779,34 @@ const enterpriseRetentionSchema = z.object({
   retention_mode: z.string().trim().toLowerCase(),
   retention_days: z.union([z.number(), z.string(), z.null(), z.undefined()])
 });
+
+function findPublicCaseByLookup(caseIdRaw, identifierRaw) {
+  const caseId = String(caseIdRaw || "").trim();
+  const identifier = String(identifierRaw || "").trim();
+  if (!caseId || !identifier) return null;
+
+  const caso = get(
+    `SELECT
+      c.id, c.case_code, c.estado, c.categoria, c.entidad, c.plan_elegido, c.created_at, c.updated_at,
+      c.dni_cuit, c.email_contacto, c.payment_receipt_uploaded_at, c.payment_receipt_filename,
+      COALESCE(c.email_contacto, u.email) AS owner_email
+     FROM cases c
+     JOIN users u ON u.id = c.user_id
+     WHERE (c.id = ? OR c.case_code = ?)
+       AND c.enterprise_user_id IS NULL`,
+    [caseId, caseId]
+  );
+
+  if (!caso) return null;
+  const normalizedIdentifier = identifier.toLowerCase();
+  const ownerEmail = String(caso.owner_email || "").trim().toLowerCase();
+  const ownerDni = String(caso.dni_cuit || "").trim();
+  const emailMatches = ownerEmail && ownerEmail === normalizedIdentifier;
+  const dniMatches = ownerDni && ownerDni === identifier;
+  if (!emailMatches && !dniMatches) return null;
+
+  return caso;
+}
 
 function validateBody(schema, payload) {
   const parsed = schema.safeParse(payload || {});
@@ -959,6 +1021,49 @@ function parseCsvText(csvText) {
   return rows;
 }
 
+function randomCaseSuffix(length = 6) {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let out = "";
+  for (let i = 0; i < length; i += 1) {
+    out += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return out;
+}
+
+function generatePublicCaseCode() {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const code = `RFA-${randomCaseSuffix(6)}`;
+    const exists = get("SELECT id FROM cases WHERE case_code = ? LIMIT 1", [code]);
+    if (!exists) return code;
+  }
+  return `RFA-${Date.now().toString(36).toUpperCase()}`;
+}
+
+let publicIntakeUserIdCache = null;
+const PUBLIC_INTAKE_EMAIL = "intake.publico@rfargentina.com";
+
+function getOrCreatePublicIntakeUserId() {
+  if (publicIntakeUserIdCache) return publicIntakeUserIdCache;
+  const existing = get("SELECT id FROM users WHERE email = ?", [PUBLIC_INTAKE_EMAIL]);
+  if (existing && existing.id) {
+    publicIntakeUserIdCache = existing.id;
+    return existing.id;
+  }
+
+  const userId = randomUUID();
+  const tempPasswordHash = bcrypt.hashSync(randomUUID(), 10);
+  run(
+    "INSERT INTO users (id, email, password_hash, role, email_verified, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+    [userId, PUBLIC_INTAKE_EMAIL, tempPasswordHash, "user", 1]
+  );
+  const created = get("SELECT id FROM users WHERE email = ?", [PUBLIC_INTAKE_EMAIL]);
+  if (!created?.id) {
+    throw new Error("No se pudo crear el usuario tecnico de carga publica");
+  }
+  publicIntakeUserIdCache = created.id;
+  return created.id;
+}
+
 function canAccessCase(user, caso) {
   if (!user || !caso) return false;
   if (user.role === "admin") return true;
@@ -975,7 +1080,7 @@ function getSendgridErrorDetail(err) {
 }
 
 async function sendStatusEmail({ to, status, message, caseId }) {
-  if (!SENDGRID_API_KEY || !EMAIL_FROM || !isValidEmail(to)) return;
+  if (!CAN_SEND_AUTOMATIC_EMAIL || !isValidEmail(to)) return;
   const subject = `Actualizacion de tu reclamo: ${status}`;
   const text = [
     `Estado actual: ${status}`,
@@ -998,7 +1103,7 @@ async function sendStatusEmail({ to, status, message, caseId }) {
 }
 
 async function sendVerificationEmail({ to, token }) {
-  if (!SENDGRID_API_KEY || !EMAIL_FROM || !isValidEmail(to) || !token) return;
+  if (!CAN_SEND_AUTOMATIC_EMAIL || !isValidEmail(to) || !token) return;
   const verifyUrl = `${APP_BASE_URL}/verificar?token=${encodeURIComponent(token)}`;
   const subject = "Verifica tu email en RFA";
   const text = [
@@ -1190,6 +1295,214 @@ app.post("/api/enterprise", publicFormLimiter, async (req, res) => {
   }
 });
 
+app.post("/api/public/cases", publicFormLimiter, maybeUpload, async (req, res) => {
+  try {
+    const validated = validateBody(publicCaseCreateSchema, req.body);
+    if (!validated.ok) {
+      return res.status(400).json({ error: validated.error });
+    }
+
+    const body = validated.data;
+    const {
+      categoria,
+      nombre_completo,
+      dni_cuit,
+      email_contacto,
+      telefono,
+      entidad,
+      tipo_entidad,
+      monto_valor,
+      monto_escala,
+      monto_moneda,
+      medios_pago,
+      relato,
+      autorizacion,
+      plan_elegido,
+      detalle
+    } = body;
+
+    const detalleValue = cleanText(relato || detalle, 4000);
+    if (!detalleValue) {
+      return res.status(400).json({ error: "La descripcion del caso es obligatoria" });
+    }
+
+    const emailContactoClean = cleanText(email_contacto === "" ? null : email_contacto, 180)?.toLowerCase();
+    const dniCuitClean = cleanText(dni_cuit, 40);
+    if (!emailContactoClean && !dniCuitClean) {
+      return res.status(400).json({ error: "Debes indicar email o DNI/CUIT" });
+    }
+
+    const files = (req.files || []).map((file) => ({
+      originalName: file.originalname,
+      filename: file.filename,
+      size: file.size,
+      mimetype: file.mimetype
+    }));
+
+    const caseId = randomUUID();
+    const caseCode = generatePublicCaseCode();
+    const estadoInicial = "Recibido";
+    const intakeUserId = getOrCreatePublicIntakeUserId();
+
+    const insertValues = [
+      caseId,
+      intakeUserId,
+      cleanText(categoria, 120),
+      detalleValue,
+      estadoInicial,
+      cleanText(nombre_completo, 120),
+      dniCuitClean,
+      emailContactoClean,
+      cleanText(telefono, 60),
+      cleanText(entidad, 160),
+      cleanText(tipo_entidad, 160),
+      cleanText(monto_valor, 40),
+      cleanText(monto_escala, 40),
+      cleanText(monto_moneda, 20),
+      typeof medios_pago === "string" ? medios_pago : JSON.stringify(medios_pago || []),
+      cleanText(relato, 4000),
+      autorizacion === "true" || autorizacion === true ? 1 : 0,
+      files.length ? JSON.stringify(files) : null,
+      cleanText(plan_elegido, 120),
+      caseCode
+    ].map((value) => (value === undefined ? null : value));
+
+    run(
+      `INSERT INTO cases (
+        id, user_id, categoria, detalle, estado, nombre_completo, dni_cuit, email_contacto, telefono,
+        entidad, tipo_entidad, monto_valor, monto_escala, monto_moneda, medios_pago, relato,
+        autorizacion, adjuntos, plan_elegido, case_code
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      insertValues
+    );
+
+    run("INSERT INTO case_updates (id, case_id, author_id, mensaje, estado, prioridad) VALUES (?, ?, ?, ?, ?, ?)", [
+      randomUUID(),
+      caseId,
+      intakeUserId,
+      "Caso cargado por formulario publico.",
+      estadoInicial,
+      null
+    ]);
+
+    return res.status(201).json({
+      id: caseId,
+      case_code: caseCode,
+      estado: estadoInicial,
+      message: "Caso cargado correctamente. Guarda tu ID para seguimiento."
+    });
+  } catch (err) {
+    console.error("PUBLIC CASE CREATE ERR:", req.requestId, err?.message || err);
+    return res.status(500).json({ error: "Error al crear el caso" });
+  }
+});
+
+app.post("/api/public/case-lookup", publicFormLimiter, async (req, res) => {
+  try {
+    const validated = validateBody(publicCaseLookupSchema, req.body);
+    if (!validated.ok) {
+      return res.status(400).json({ error: validated.error });
+    }
+
+    const caseId = String(validated.data.case_id || "").trim();
+    const identifier = String(validated.data.identifier || "").trim();
+    if (!caseId || !identifier) {
+      return res.status(400).json({ error: "Debes ingresar ID de caso e identificador" });
+    }
+
+    const notFoundMessage = "No se encontro un caso con esos datos";
+    const caso = findPublicCaseByLookup(caseId, identifier);
+    if (!caso) {
+      return res.status(404).json({ error: notFoundMessage });
+    }
+
+    const updates = all(
+      `
+      SELECT cu.*, u.email AS author_email
+      FROM case_updates cu
+      LEFT JOIN users u ON u.id = cu.author_id
+      WHERE cu.case_id = ?
+      ORDER BY cu.created_at DESC, cu.rowid DESC
+      `,
+      [caso.id]
+    );
+
+    return res.json({
+      case: {
+        id: caso.id,
+        case_code: caso.case_code || caso.id,
+        estado: caso.estado || "Recibido",
+        categoria: caso.categoria || null,
+        entidad: caso.entidad || null,
+        plan_elegido: caso.plan_elegido || null,
+        payment_receipt_uploaded_at: caso.payment_receipt_uploaded_at || null,
+        has_payment_receipt: Boolean(caso.payment_receipt_filename),
+        email_contacto: caso.email_contacto || null,
+        created_at: caso.created_at,
+        updated_at: caso.updated_at
+      },
+      updates
+    });
+  } catch (err) {
+    console.error("PUBLIC CASE LOOKUP ERR:", req.requestId, err.message);
+    return res.status(500).json({ error: "Error al consultar el caso" });
+  }
+});
+
+app.post("/api/public/case-payment-receipt", publicFormLimiter, (req, res, next) => {
+  upload.single("comprobante")(req, res, (err) => {
+    if (err) return next(err);
+    return next();
+  });
+}, async (req, res) => {
+  try {
+    const caseId = cleanText(req.body?.case_id, 80);
+    const identifier = cleanText(req.body?.identifier, 180);
+    if (!caseId || !identifier) {
+      return res.status(400).json({ error: "Debes indicar ID de caso e identificador" });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: "Debes adjuntar un comprobante" });
+    }
+
+    const caso = findPublicCaseByLookup(caseId, identifier);
+    if (!caso) {
+      return res.status(404).json({ error: "No se encontro un caso con esos datos" });
+    }
+
+    const oldFilename = path.basename(String(caso.payment_receipt_filename || "").trim());
+    if (oldFilename) {
+      const oldPath = path.join(UPLOADS_DIR, oldFilename);
+      if (fs.existsSync(oldPath)) {
+        try {
+          fs.unlinkSync(oldPath);
+        } catch (err) {
+          console.error("PAYMENT RECEIPT REPLACE ERR:", oldFilename, err.message);
+        }
+      }
+    }
+
+    run(
+      `UPDATE cases
+       SET payment_receipt_filename = ?, payment_receipt_original_name = ?, payment_receipt_uploaded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [req.file.filename, cleanText(req.file.originalname, 255), caso.id]
+    );
+    run(
+      "INSERT INTO case_updates (id, case_id, author_id, mensaje, estado, prioridad) VALUES (?, ?, ?, ?, ?, ?)",
+      [randomUUID(), caso.id, null, "Cliente cargo comprobante de pago.", caso.estado || null, null]
+    );
+
+    return res.status(201).json({
+      message: "Comprobante cargado correctamente.",
+      payment_receipt_uploaded_at: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error("PUBLIC PAYMENT RECEIPT ERR:", req.requestId, err.message);
+    return res.status(500).json({ error: "No se pudo cargar el comprobante" });
+  }
+});
+
 app.get("/api/enterprise", authRequired, adminOnly, async (_req, res) => {
   try {
     const rows = all("SELECT * FROM enterprise_inquiries ORDER BY created_at DESC");
@@ -1365,7 +1678,7 @@ app.post("/api/auth/register", authLimiter, async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 10);
     const role = ADMIN_EMAILS.includes(emailNorm) ? "admin" : "user";
     const verificationToken = AUTH_REQUIRE_EMAIL_VERIFICATION ? randomUUID() : null;
-    if (AUTH_REQUIRE_EMAIL_VERIFICATION && !CAN_SEND_EMAIL) {
+    if (AUTH_REQUIRE_EMAIL_VERIFICATION && !CAN_SEND_AUTOMATIC_EMAIL) {
       return res.status(503).json({
         error: "Verificacion por email no configurada en el servidor",
         code: "EMAIL_SERVICE_NOT_CONFIGURED"
@@ -1466,6 +1779,19 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
         reason: "email_not_verified"
       });
       return res.status(403).json({ error: "Email no verificado", code: "EMAIL_NOT_VERIFIED" });
+    }
+
+    if (user.role === "user") {
+      logLoginAudit(req, {
+        userId: user.id,
+        email: emailNorm,
+        success: false,
+        reason: "user_portal_disabled"
+      });
+      return res.status(403).json({
+        error: "El acceso para particulares se realiza desde 'Consultar caso' con email + ID de caso",
+        code: "USER_PORTAL_DISABLED"
+      });
     }
 
     if (ADMIN_EMAILS.includes(emailNorm) && user.role !== "admin") {
@@ -1662,7 +1988,7 @@ app.post("/api/auth/resend-verification", authLimiter, async (req, res) => {
     if (!AUTH_REQUIRE_EMAIL_VERIFICATION) {
       return res.status(200).json({ message: "La verificacion por email no es obligatoria actualmente." });
     }
-    if (!CAN_SEND_EMAIL) {
+    if (!CAN_SEND_AUTOMATIC_EMAIL) {
       return res.status(400).json({ error: "Envio de email no configurado" });
     }
 
@@ -1813,13 +2139,6 @@ app.post("/api/cases", authRequired, maybeUpload, async (req, res) => {
       return res.status(400).json({ error: "La descripcion del caso es obligatoria" });
     }
 
-    const files = (req.files || []).map((file) => ({
-      originalName: file.originalname,
-      filename: file.filename,
-      size: file.size,
-      mimetype: file.mimetype
-    }));
-
     const nombreCompletoClean = cleanText(nombre_completo, 120);
     const dniCuitClean = cleanText(dni_cuit, 40);
     const emailContactoClean = cleanText(email_contacto === "" ? null : email_contacto, 180)?.toLowerCase();
@@ -1831,6 +2150,7 @@ app.post("/api/cases", authRequired, maybeUpload, async (req, res) => {
     const montoMonedaClean = cleanText(monto_moneda, 20);
     const relatoClean = cleanText(relato, 4000);
     const planElegidoClean = cleanText(plan_elegido, 120);
+    const caseCode = generatePublicCaseCode();
 
     const caseId = randomUUID();
     const estadoInicial = "Recibido";
@@ -1838,8 +2158,8 @@ app.post("/api/cases", authRequired, maybeUpload, async (req, res) => {
       `INSERT INTO cases (
         id, user_id, categoria, detalle, estado, nombre_completo, dni_cuit, email_contacto, telefono,
         entidad, tipo_entidad, monto_valor, monto_escala, monto_moneda, medios_pago, relato,
-        autorizacion, adjuntos, plan_elegido
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        autorizacion, adjuntos, plan_elegido, case_code
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         caseId,
         req.user.sub,
@@ -1859,7 +2179,8 @@ app.post("/api/cases", authRequired, maybeUpload, async (req, res) => {
         relatoClean,
         autorizacion === "true" || autorizacion === true ? 1 : 0,
         files.length ? JSON.stringify(files) : null,
-        planElegidoClean
+        planElegidoClean,
+        caseCode
       ]
     );
 
@@ -1920,7 +2241,7 @@ app.get("/api/cases/:id/updates", authRequired, async (req, res) => {
       FROM case_updates cu
       LEFT JOIN users u ON u.id = cu.author_id
       WHERE cu.case_id = ?
-      ORDER BY cu.created_at DESC
+      ORDER BY cu.created_at DESC, cu.rowid DESC
       `,
       [req.params.id]
     );
@@ -1965,6 +2286,29 @@ app.get("/api/cases/:id/files/:filename", authRequired, async (req, res) => {
     return res.download(filePath, downloadName);
   } catch (err) {
     return res.status(500).json({ error: "Error al descargar adjunto" });
+  }
+});
+
+app.get("/api/cases/:id/payment-receipt", authRequired, async (req, res) => {
+  try {
+    const caso = get("SELECT * FROM cases WHERE id = ?", [req.params.id]);
+    if (!caso) return res.status(404).json({ error: "Caso no encontrado" });
+    if (!canAccessCase(req.user, caso)) {
+      return res.status(403).json({ error: "Acceso restringido" });
+    }
+
+    const filename = path.basename(String(caso.payment_receipt_filename || "").trim());
+    if (!filename) {
+      return res.status(404).json({ error: "El caso no tiene comprobante cargado" });
+    }
+    const filePath = path.join(UPLOADS_DIR, filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "Comprobante no disponible" });
+    }
+    const downloadName = cleanText(caso.payment_receipt_original_name, 255) || `comprobante_${caso.case_code || caso.id}`;
+    return res.download(filePath, downloadName);
+  } catch (err) {
+    return res.status(500).json({ error: "Error al descargar comprobante" });
   }
 });
 
@@ -2252,8 +2596,8 @@ initSqlJs({ locateFile: (file) => path.join(__dirname, "node_modules", "sql.js",
       console.warn("DB RECOVERY WARN:", err.message);
     }
     initDb();
-    if (!CAN_SEND_EMAIL) {
-      console.warn("AUTH WARN: verificacion por email desactivada (falta SENDGRID_API_KEY o EMAIL_FROM).");
+    if (!CAN_SEND_AUTOMATIC_EMAIL) {
+      console.warn("AUTH WARN: envio automatico de email desactivado.");
     }
     try {
       const firstPurge = purgeExpiredClosedCases();
@@ -2304,8 +2648,3 @@ initSqlJs({ locateFile: (file) => path.join(__dirname, "node_modules", "sql.js",
     console.error("DB INIT ERR:", err.message);
     process.exit(1);
   });
-
-
-
-
-
