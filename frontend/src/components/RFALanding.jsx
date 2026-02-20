@@ -217,6 +217,66 @@ const services = [
           </div>
         </section>
 
+        <section className="py-10 px-6">
+          <div className="max-w-6xl mx-auto bg-white/5 border border-white/10 rounded-2xl p-8">
+            <h2 className="text-2xl md:text-3xl font-bold text-slate-100 mb-4">¿Podés reclamar por tu cuenta? Sí.</h2>
+            <p className="text-slate-200 text-lg mb-4">La pregunta es cómo querés que te respondan.</p>
+            <p className="text-slate-300 mb-4">
+              Muchos usuarios inician su reclamo directamente ante la entidad. En la mayoría de los casos reciben:
+            </p>
+            <ul className="space-y-2 text-slate-200 text-sm mb-4">
+              <li>• Respuestas automáticas.</li>
+              <li>• Derivaciones internas sin seguimiento real.</li>
+              <li>• Solicitudes repetidas de información ya enviada.</li>
+              <li>• Cierre del caso sin fundamento claro.</li>
+            </ul>
+            <p className="text-slate-300 mb-2">El problema no suele ser el reclamo. Es cómo está estructurado.</p>
+            <p className="text-slate-300 mb-2">Un reclamo desordenado se pierde en el circuito automático.</p>
+            <p className="text-slate-300 mb-4">Un reclamo técnico y documentado obliga a revisión interna.</p>
+            <p className="text-slate-100 font-semibold">RFA no reemplaza tu voz. La organiza y la fortalece.</p>
+          </div>
+        </section>
+
+        <section className="py-10 px-6">
+          <div className="max-w-6xl mx-auto grid md:grid-cols-2 gap-6">
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-8">
+              <h2 className="text-2xl md:text-3xl font-bold text-slate-100 mb-4">
+                La diferencia no es reclamar.
+              </h2>
+              <p className="text-2xl md:text-3xl font-bold text-emerald-300 mb-4">Es cómo reclamás.</p>
+              <p className="text-slate-300 mb-2">Un mensaje emocional genera una respuesta estándar.</p>
+              <p className="text-slate-300 mb-4">Un reclamo estructurado genera una revisión.</p>
+              <p className="text-slate-300 mb-3">Cuando el caso:</p>
+              <ul className="space-y-2 text-slate-200 text-sm">
+                <li>• Tiene cronología clara.</li>
+                <li>• Identifica inconsistencias.</li>
+                <li>• Cita normativa aplicable cuando corresponde.</li>
+                <li>• Registra cada comunicación.</li>
+              </ul>
+              <p className="text-slate-100 font-semibold mt-4">
+                La entidad sabe que no está frente a un reclamo común.
+              </p>
+            </div>
+
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-8">
+              <h2 className="text-2xl md:text-3xl font-bold text-slate-100 mb-4">
+                Señales de que tu reclamo necesita estructura
+              </h2>
+              <ul className="space-y-2 text-slate-200 text-sm mb-4">
+                <li>• Te respondieron sin mencionar el punto central.</li>
+                <li>• Te pidieron información que ya habías enviado.</li>
+                <li>• Cambiaron el número de ticket sin resolver el fondo.</li>
+                <li>• Cerraron el caso sin explicación clara.</li>
+                <li>• Pasaron más de 10 días hábiles sin respuesta concreta.</li>
+                <li>• El dinero sigue retenido o el cargo discutido continúa activo.</li>
+              </ul>
+              <p className="text-slate-100 font-semibold">
+                Si reconocés alguna de estas situaciones, tu reclamo necesita orden técnico y seguimiento real.
+              </p>
+            </div>
+          </div>
+        </section>
+
         {/* ================= MODALIDADES ================= */}
         <section id="modalidades" className="py-10 px-6">
           <div className="max-w-6xl mx-auto grid md:grid-cols-2 gap-6">
@@ -418,7 +478,7 @@ const services = [
             </h2>
             <p className="text-slate-200 mb-4">
               Un reclamo bien estructurado no depende de la agresividad, sino de la claridad y la consistencia.
-              Elegí el nivel de intervención que necesitás.
+              Elegí el nivel de intervención que mejor se adapte a tu caso.
             </p>
             <p className="text-lg text-slate-300 mb-8">
               Elegí la modalidad que mejor se adapta a tu caso.
