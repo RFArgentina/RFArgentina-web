@@ -566,6 +566,24 @@ function isStrongPassword(value) {
   return hasLetter && hasNumber;
 }
 
+
+function generateEnterprisePassword() {
+  // Strong random password: uppercase, lowercase, numbers and symbols
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lower = "abcdefghijkmnopqrstuvwxyz";
+  const numbers = "23456789";
+  const symbols = "!@#$%*-_";
+  const all = upper + lower + numbers + symbols;
+  const pick = (chars) => chars[Math.floor(Math.random() * chars.length)];
+  const chars = [pick(upper), pick(lower), pick(numbers), pick(symbols)];
+  while (chars.length < 14) chars.push(pick(all));
+  for (let i = chars.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join("");
+}
+
 function cleanText(value, max = 1000) {
   if (value == null) return null;
   const text = String(value).trim();
@@ -732,6 +750,12 @@ const enterpriseInquirySchema = z.object({
   descripcion: z.string().trim().min(5).max(4000),
   volumen: z.string().trim().min(1).max(60),
   comentarios: z.union([z.string().trim().max(2000), z.null(), z.undefined()])
+});
+
+
+const enterpriseUserCreateSchema = z.object({
+  email: z.string().trim().email(),
+  password: z.union([z.string().min(8).max(72), z.null(), z.undefined()])
 });
 
 const publicCaseLookupSchema = z.object({
@@ -1520,6 +1544,57 @@ app.get("/api/enterprise-users", authRequired, adminOnly, async (_req, res) => {
     return res.json(rows);
   } catch (err) {
     return res.status(500).json({ error: "Error al listar usuarios empresa" });
+  }
+});
+
+app.post("/api/enterprise-users", authRequired, adminOnly, async (req, res) => {
+  try {
+    const validated = validateBody(enterpriseUserCreateSchema, req.body);
+    if (!validated.ok) {
+      return res.status(400).json({ error: validated.error });
+    }
+
+    const emailNorm = cleanText(validated.data.email, 180)?.toLowerCase();
+    if (!emailNorm) {
+      return res.status(400).json({ error: "Email invalido" });
+    }
+
+    const existing = get("SELECT id FROM users WHERE lower(email) = lower(?)", [emailNorm]);
+    if (existing) {
+      return res.status(409).json({ error: "Ese email ya existe" });
+    }
+
+    const passwordPlain = cleanText(validated.data.password || "", 100) || generateEnterprisePassword();
+    if (!isStrongPassword(passwordPlain)) {
+      return res.status(400).json({
+        error: "La contrasena debe tener entre 8 y 72 caracteres, con letras y numeros"
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(passwordPlain, 10);
+    const userId = randomUUID();
+
+    run(
+      "INSERT INTO users (id, email, password_hash, role, email_verified, created_at) VALUES (?, ?, ?, 'enterprise', 1, CURRENT_TIMESTAMP)",
+      [userId, emailNorm, passwordHash]
+    );
+
+    logSecurityEvent(req, {
+      userId: req.user.sub,
+      eventType: "enterprise_user_created",
+      resourceType: "user",
+      resourceId: userId,
+      success: true,
+      details: { email: emailNorm, role: "enterprise" }
+    });
+
+    return res.status(201).json({
+      message: "Usuario empresa creado",
+      user: { id: userId, email: emailNorm, role: "enterprise" },
+      generated_password: passwordPlain
+    });
+  } catch (err) {
+    return res.status(500).json({ error: "Error al crear usuario empresa" });
   }
 });
 

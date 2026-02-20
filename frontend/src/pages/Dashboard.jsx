@@ -41,6 +41,11 @@ export default function Dashboard() {
   const [infoPlanId, setInfoPlanId] = useState(null);
   const [enterpriseInquiries, setEnterpriseInquiries] = useState([]);
   const [enterpriseUsers, setEnterpriseUsers] = useState([]);
+  const [newEnterpriseEmail, setNewEnterpriseEmail] = useState("");
+  const [newEnterprisePassword, setNewEnterprisePassword] = useState("");
+  const [creatingEnterpriseUser, setCreatingEnterpriseUser] = useState(false);
+  const [generatedEnterpriseCredentials, setGeneratedEnterpriseCredentials] = useState(null);
+  const [copiedCredentials, setCopiedCredentials] = useState(false);
   const [selectedEnterpriseUserId, setSelectedEnterpriseUserId] = useState("");
   const [importFile, setImportFile] = useState(null);
   const [importSummary, setImportSummary] = useState(null);
@@ -669,6 +674,61 @@ export default function Dashboard() {
       setError(err.message || "No se pudo importar casos.");
     } finally {
       setImporting(false);
+    }
+  };
+
+  const handleCreateEnterpriseUser = async (event) => {
+    event.preventDefault();
+    if (!newEnterpriseEmail.trim()) {
+      setError("Debes ingresar un email para el usuario empresa.");
+      return;
+    }
+    setCreatingEnterpriseUser(true);
+    setError("");
+    setGeneratedEnterpriseCredentials(null);
+    try {
+      const result = await apiRequest("/enterprise-users", {
+        method: "POST",
+        body: JSON.stringify({
+          email: newEnterpriseEmail.trim(),
+          password: newEnterprisePassword.trim() || undefined
+        })
+      });
+      setGeneratedEnterpriseCredentials({
+        email: result?.user?.email || newEnterpriseEmail.trim(),
+        password: result?.generated_password || newEnterprisePassword.trim()
+      });
+      setNewEnterpriseEmail("");
+      setNewEnterprisePassword("");
+      await loadCases();
+    } catch (err) {
+      setError(err.message || "No se pudo crear el usuario empresa.");
+    } finally {
+      setCreatingEnterpriseUser(false);
+    }
+  };
+
+  const handleCopyEnterpriseCredentials = async () => {
+    if (!generatedEnterpriseCredentials) return;
+    const payload = [
+      `Email: ${generatedEnterpriseCredentials.email}`,
+      `Contrasena: ${generatedEnterpriseCredentials.password}`
+    ].join("\n");
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(payload);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = payload;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+      setCopiedCredentials(true);
+      setTimeout(() => setCopiedCredentials(false), 1800);
+    } catch {
+      setError("No se pudieron copiar las credenciales.");
     }
   };
 
@@ -1855,6 +1915,54 @@ export default function Dashboard() {
                 </div>
               );
             })()}
+
+            {!loading && isAdmin && (
+              <div className="bg-white/10 border border-white/10 rounded-2xl p-5 space-y-4">
+                <h2 className="text-xl font-semibold">Generar usuario empresa</h2>
+                <form onSubmit={handleCreateEnterpriseUser} className="grid md:grid-cols-[1fr_1fr_auto] gap-3">
+                  <input
+                    type="email"
+                    value={newEnterpriseEmail}
+                    onChange={(e) => setNewEnterpriseEmail(e.target.value)}
+                    placeholder="empresa@dominio.com"
+                    className="rounded-lg bg-white/10 border border-white/10 px-4 py-2 text-white placeholder:text-slate-400"
+                    required
+                  />
+                  <input
+                    type="text"
+                    value={newEnterprisePassword}
+                    onChange={(e) => setNewEnterprisePassword(e.target.value)}
+                    placeholder="Contraseña (opcional)"
+                    className="rounded-lg bg-white/10 border border-white/10 px-4 py-2 text-white placeholder:text-slate-400"
+                  />
+                  <Button
+                    type="submit"
+                    className="bg-emerald-500 hover:bg-emerald-600 text-white"
+                    disabled={creatingEnterpriseUser}
+                  >
+                    {creatingEnterpriseUser ? "Generando..." : "Generar usuario empresa"}
+                  </Button>
+                </form>
+                <p className="text-xs text-slate-400">
+                  Si no cargas contraseña, el sistema genera una segura automáticamente.
+                </p>
+                {generatedEnterpriseCredentials && (
+                  <div className="bg-white/5 border border-white/10 rounded-xl p-4 text-sm text-slate-200">
+                    <p><span className="text-slate-400">Email:</span> {generatedEnterpriseCredentials.email}</p>
+                    <p><span className="text-slate-400">Contraseña:</span> {generatedEnterpriseCredentials.password}</p>
+                    <div className="mt-3">
+                      <Button
+                        type="button"
+                        className="bg-white/10 hover:bg-white/20 text-white"
+                        onClick={handleCopyEnterpriseCredentials}
+                      >
+                        {copiedCredentials ? "Copiado" : "Copiar credenciales"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {!loading && isAdmin && (
               <div className="bg-white/10 border border-white/10 rounded-2xl p-5 space-y-4">
