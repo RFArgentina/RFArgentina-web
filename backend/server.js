@@ -27,6 +27,7 @@ const IS_PROD = NODE_ENV === "production";
 const CORS_ORIGINS = (process.env.CORS_ORIGINS || "").split(",").map((v) => v.trim()).filter(Boolean);
 const JWT_SECRET = process.env.JWT_SECRET || "";
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "").split(",").map((v) => v.trim().toLowerCase()).filter(Boolean);
+const ADMIN_BOOTSTRAP_PASSWORD = process.env.ADMIN_BOOTSTRAP_PASSWORD || "";
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || "";
 const EMAIL_FROM = process.env.EMAIL_FROM || "";
 const EMAIL_AUTOMATIC_ENABLED = String(process.env.EMAIL_AUTOMATIC_ENABLED || "false").toLowerCase() === "true";
@@ -1086,6 +1087,44 @@ function getOrCreatePublicIntakeUserId() {
   }
   publicIntakeUserIdCache = created.id;
   return created.id;
+}
+
+
+function ensureAdminAccounts() {
+  if (!ADMIN_EMAILS.length) return;
+
+  const password = cleanText(ADMIN_BOOTSTRAP_PASSWORD, 120) || null;
+  if (password && !isStrongPassword(password)) {
+    throw new Error("ADMIN_BOOTSTRAP_PASSWORD invalida: debe tener 8-72 caracteres, letras y numeros");
+  }
+
+  const passwordHash = password ? bcrypt.hashSync(password, 10) : null;
+
+  ADMIN_EMAILS.forEach((email) => {
+    const existing = get("SELECT id, role FROM users WHERE email = ?", [email]);
+    if (existing?.id) {
+      if (passwordHash) {
+        run(
+          "UPDATE users SET role = 'admin', password_hash = ?, email_verified = 1 WHERE id = ?",
+          [passwordHash, existing.id]
+        );
+      } else if (existing.role !== "admin") {
+        run("UPDATE users SET role = 'admin', email_verified = 1 WHERE id = ?", [existing.id]);
+      }
+      return;
+    }
+
+    if (!passwordHash) {
+      console.warn(`ADMIN BOOTSTRAP WARN: no se crea ${email} porque falta ADMIN_BOOTSTRAP_PASSWORD`);
+      return;
+    }
+
+    const userId = randomUUID();
+    run(
+      "INSERT INTO users (id, email, password_hash, role, email_verified, created_at) VALUES (?, ?, ?, 'admin', 1, CURRENT_TIMESTAMP)",
+      [userId, email, passwordHash]
+    );
+  });
 }
 
 function canAccessCase(user, caso) {
@@ -2671,6 +2710,7 @@ initSqlJs({ locateFile: (file) => path.join(__dirname, "node_modules", "sql.js",
       console.warn("DB RECOVERY WARN:", err.message);
     }
     initDb();
+    ensureAdminAccounts();
     if (!CAN_SEND_AUTOMATIC_EMAIL) {
       console.warn("AUTH WARN: envio automatico de email desactivado.");
     }
