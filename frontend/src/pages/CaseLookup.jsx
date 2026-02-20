@@ -1,6 +1,7 @@
 ﻿import { useState } from "react";
 import { apiRequest } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { formatDateTimeAr } from "@/lib/datetime";
 
 export default function CaseLookup() {
   const [identifier, setIdentifier] = useState("");
@@ -105,7 +106,7 @@ export default function CaseLookup() {
               <div><span className="text-slate-400">Categoria:</span> {result.case.categoria || "-"}</div>
               <div><span className="text-slate-400">Entidad:</span> {result.case.entidad || "-"}</div>
               <div><span className="text-slate-400">Plan:</span> {result.case.plan_elegido || "-"}</div>
-              <div><span className="text-slate-400">Ultima actualizacion:</span> {new Date(result.case.updated_at || result.case.created_at).toLocaleString("es-AR")}</div>
+              <div><span className="text-slate-400">Ultima actualizacion:</span> {formatDateTimeAr(result.case.updated_at || result.case.created_at)}</div>
             </div>
 
             {result.case.estado === "Viable (pendiente de pago)" && result.case.plan_elegido && (
@@ -130,7 +131,7 @@ export default function CaseLookup() {
                 )}
                 {result.case.payment_receipt_uploaded_at && (
                   <p className="text-xs text-emerald-200">
-                    Ultimo comprobante cargado: {new Date(result.case.payment_receipt_uploaded_at).toLocaleString("es-AR")}
+                    Ultimo comprobante cargado: {formatDateTimeAr(result.case.payment_receipt_uploaded_at)}
                   </p>
                 )}
               </div>
@@ -148,7 +149,7 @@ export default function CaseLookup() {
                     <div className="mt-2 text-xs text-slate-400 flex flex-wrap gap-3">
                       {update.estado && <span>Estado: {update.estado}</span>}
                       {update.prioridad && <span>Prioridad: {update.prioridad}</span>}
-                      <span>{new Date(update.created_at).toLocaleString("es-AR")}</span>
+                      <span>{formatDateTimeAr(update.created_at)}</span>
                     </div>
                   </div>
                 ))}

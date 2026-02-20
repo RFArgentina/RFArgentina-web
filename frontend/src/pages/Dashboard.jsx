@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiRequest } from "@/lib/api";
 import { clearToken, getToken } from "@/lib/auth";
+import { formatDateAr, formatDateTimeAr } from "@/lib/datetime";
 import { Button } from "@/components/ui/button";
 import { plans } from "@/data/plans";
 
@@ -1305,7 +1306,7 @@ export default function Dashboard() {
                               </span>
                             </td>
                             <td className="px-4 py-3 text-xs text-slate-400">
-                              {new Date(c.created_at).toLocaleDateString("es-AR")}
+                              {formatDateAr(c.created_at)}
                             </td>
                             <td className="px-4 py-3">
                               <div className="flex flex-col gap-2">
@@ -1422,7 +1423,7 @@ export default function Dashboard() {
                       {c.estado}
                     </span>
                     {c.plan_elegido && <p className="text-xs text-slate-400 mt-1">Plan: {c.plan_elegido}</p>}
-                    <p className="text-xs text-slate-400 mt-1">{new Date(c.created_at).toLocaleDateString("es-AR")}</p>
+                    <p className="text-xs text-slate-400 mt-1">{formatDateAr(c.created_at)}</p>
                   </div>
                   <Button
                     className="bg-white/10 hover:bg-white/20 text-white"
@@ -1448,7 +1449,7 @@ export default function Dashboard() {
                           <span>
                             {u.author_email ? `Actualizado por ${u.author_email}` : "Actualización registrada"}
                           </span>
-                          <span>{new Date(u.created_at).toLocaleDateString("es-AR")}</span>
+                          <span>{formatDateAr(u.created_at)}</span>
                         </div>
                       </div>
                     ))}
@@ -1628,7 +1629,7 @@ export default function Dashboard() {
                               </div>
                             </td>
                             <td className="px-4 py-3 text-xs text-slate-400">
-                              {new Date(c.created_at).toLocaleDateString("es-AR")}
+                              {formatDateAr(c.created_at)}
                             </td>
                             <td className="px-4 py-3">
                               <div className="flex flex-wrap gap-2">
@@ -1689,7 +1690,7 @@ export default function Dashboard() {
                                               </span>
                                             )}
                                             <span>{u.author_email ? `Actualizado por ${u.author_email}` : "Actualización registrada"}</span>
-                                            <span>{new Date(u.created_at).toLocaleString("es-AR")}</span>
+                                            <span>{formatDateTimeAr(u.created_at)}</span>
                                           </div>
                                         </div>
                                       ))}
@@ -1824,7 +1825,7 @@ export default function Dashboard() {
                         <span>
                           {u.author_email ? `Actualizado por ${u.author_email}` : "Actualización registrada"}
                         </span>
-                        <span>{new Date(u.created_at).toLocaleDateString("es-AR")}</span>
+                        <span>{formatDateAr(u.created_at)}</span>
                       </div>
                     </div>
                   ))}
@@ -1991,7 +1992,7 @@ export default function Dashboard() {
                             <td className="px-4 py-3 text-sm text-slate-200">{c.plan_elegido || "-"}</td>
                             <td className="px-4 py-3 text-xs text-slate-400">
                               {c.payment_receipt_uploaded_at
-                                ? new Date(c.payment_receipt_uploaded_at).toLocaleString("es-AR")
+                                ? formatDateTimeAr(c.payment_receipt_uploaded_at)
                                 : "-"}
                             </td>
                             <td className="px-4 py-3">
@@ -2050,7 +2051,7 @@ export default function Dashboard() {
                                 {parseServices(item.servicios).join(", ")}
                               </td>
                               <td className="px-4 py-3 text-xs text-slate-400">
-                                {new Date(item.created_at).toLocaleDateString("es-AR")}
+                                {formatDateAr(item.created_at)}
                               </td>
                               <td className="px-4 py-3">
                                 <Button
