@@ -8,14 +8,21 @@ export default function Header() {
   const location = useLocation();
   const isAuthenticated = Boolean(getToken());
   const isHome = location.pathname === "/";
+  const hasPendingChanges = () => Boolean(window?.__RFA_UNSAVED_CHANGES__);
+  const confirmLeaveWithUnsaved = () => {
+    if (!hasPendingChanges()) return true;
+    return window.confirm("Tenés cambios sin guardar. ¿Querés salir sin guardar?");
+  };
 
   const handleLogout = () => {
+    if (!confirmLeaveWithUnsaved()) return;
     clearToken();
     setMenuOpen(false);
     navigate("/");
   };
 
   const handleNav = (sectionId) => {
+    if (!confirmLeaveWithUnsaved()) return;
     setMenuOpen(false);
     if (isHome) {
       const section = document.getElementById(sectionId);
@@ -28,11 +35,15 @@ export default function Header() {
       section.scrollIntoView({ behavior: "smooth" });
     }, 150);
   };
+  const handleLinkClick = (event) => {
+    if (confirmLeaveWithUnsaved()) return;
+    event.preventDefault();
+  };
 
   return (
     <header className="bg-slate-950/80 backdrop-blur text-white fixed top-0 left-0 w-full z-30 border-b border-white/10">
       <div className="max-w-6xl mx-auto flex items-center justify-between px-6 py-3">
-        <Link to="/" className="flex items-center gap-3">
+        <Link to="/" className="flex items-center gap-3" onClick={handleLinkClick}>
           <span
             className="text-emerald-300 font-bold tracking-[0.35em] text-2xl md:text-3xl"
             style={{ fontFamily: '"Playfair Display", "Times New Roman", serif' }}
@@ -58,12 +69,14 @@ export default function Header() {
             <>
               <Link
                 to="/consultar-caso"
+                onClick={handleLinkClick}
                 className="hidden md:inline-flex items-center px-4 py-2 rounded-lg border border-white/20 hover:border-emerald-300 text-white transition"
               >
                 Consultar caso
               </Link>
               <Link
                 to="/login"
+                onClick={handleLinkClick}
                 className="hidden md:inline-flex items-center px-4 py-2 rounded-lg border border-white/20 hover:border-emerald-300 text-white transition"
               >
                 Acceso empresas
@@ -73,6 +86,7 @@ export default function Header() {
             <>
               <Link
                 to="/panel"
+                onClick={handleLinkClick}
                 className="hidden md:inline-flex items-center px-4 py-2 rounded-lg border border-white/20 hover:border-emerald-300 text-white transition"
               >
                 Mi panel
@@ -112,16 +126,16 @@ export default function Header() {
           </button>
           {!isAuthenticated ? (
             <>
-              <Link to="/consultar-caso" className="block hover:text-emerald-300 transition" onClick={() => setMenuOpen(false)}>
+              <Link to="/consultar-caso" className="block hover:text-emerald-300 transition" onClick={(e) => { if (!confirmLeaveWithUnsaved()) { e.preventDefault(); return; } setMenuOpen(false); }}>
                 Consultar caso
               </Link>
-              <Link to="/login" className="block hover:text-emerald-300 transition" onClick={() => setMenuOpen(false)}>
+              <Link to="/login" className="block hover:text-emerald-300 transition" onClick={(e) => { if (!confirmLeaveWithUnsaved()) { e.preventDefault(); return; } setMenuOpen(false); }}>
                 Acceso empresas
               </Link>
             </>
           ) : (
             <>
-              <Link to="/panel" className="block hover:text-emerald-300 transition" onClick={() => setMenuOpen(false)}>
+              <Link to="/panel" className="block hover:text-emerald-300 transition" onClick={(e) => { if (!confirmLeaveWithUnsaved()) { e.preventDefault(); return; } setMenuOpen(false); }}>
                 Mi panel
               </Link>
               <button type="button" className="block hover:text-rose-300 transition" onClick={handleLogout}>

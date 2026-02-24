@@ -5,6 +5,7 @@ import cookieParser from "cookie-parser";
 import helmet from "helmet";
 import axios from "axios";
 import { parseStringPromise } from "xml2js";
+import * as XLSX from "xlsx";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import sgMail from "@sendgrid/mail";
@@ -265,6 +266,26 @@ const upload = multer({
   }
 });
 
+const importUpload = multer({
+  dest: UPLOADS_DIR,
+  limits: { fileSize: 25 * 1024 * 1024, files: 20 },
+  fileFilter: (_req, file, cb) => {
+    const allowedMime = [
+      "text/csv",
+      "application/csv",
+      "application/vnd.ms-excel",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.oasis.opendocument.spreadsheet",
+      "text/plain",
+      "application/octet-stream"
+    ];
+    const ext = path.extname(String(file.originalname || "")).toLowerCase();
+    const allowedExt = [".csv", ".xlsx", ".xls", ".ods"];
+    if (allowedMime.includes(file.mimetype) || allowedExt.includes(ext)) return cb(null, true);
+    return cb(new multer.MulterError("LIMIT_UNEXPECTED_FILE", file.fieldname));
+  }
+});
+
 function maybeUpload(req, res, next) {
   if (req.is("multipart/form-data")) {
     return upload.array("adjuntos", 5)(req, res, next);
@@ -504,6 +525,10 @@ function initDb() {
   addColumn("fecha_caso", "TEXT");
   addColumn("canal_origen", "TEXT");
   addColumn("enterprise_user_id", "TEXT");
+  addColumn("riesgo", "TEXT");
+  addColumn("documentacion_estado", "TEXT");
+  addColumn("observaciones_empresa", "TEXT");
+  addColumn("observaciones_rfa", "TEXT");
   addColumn("payment_receipt_filename", "TEXT");
   addColumn("payment_receipt_original_name", "TEXT");
   addColumn("payment_receipt_uploaded_at", "TEXT");
@@ -797,7 +822,12 @@ const publicCaseCreateSchema = caseCreateSchema.superRefine((data, ctx) => {
 const caseUpdateSchema = z.object({
   mensaje: z.union([z.string().trim().max(3000), z.null(), z.undefined()]),
   estado: z.union([z.string().trim().max(120), z.null(), z.undefined()]),
-  prioridad: z.union([z.string().trim().max(20), z.null(), z.undefined()])
+  prioridad: z.union([z.string().trim().max(20), z.null(), z.undefined()]),
+  riesgo: z.union([z.string().trim().max(20), z.null(), z.undefined()]),
+  documentacion_estado: z.union([z.string().trim().max(40), z.null(), z.undefined()]),
+  observaciones_empresa: z.union([z.string().trim().max(3000), z.null(), z.undefined()]),
+  observaciones_rfa: z.union([z.string().trim().max(3000), z.null(), z.undefined()]),
+  descripcion_breve: z.union([z.string().trim().max(4000), z.null(), z.undefined()])
 });
 
 const enterpriseRetentionSchema = z.object({
@@ -1001,7 +1031,7 @@ function normalizeHeader(value) {
     .replace(/^_+|_+$/g, "");
 }
 
-function parseCsvLine(line) {
+function parseCsvLine(line, delimiter = ",") {
   const out = [];
   let current = "";
   let inQuotes = false;
@@ -1016,7 +1046,7 @@ function parseCsvLine(line) {
       }
       continue;
     }
-    if (ch === "," && !inQuotes) {
+    if (ch === delimiter && !inQuotes) {
       out.push(current);
       current = "";
       continue;
@@ -1033,10 +1063,14 @@ function parseCsvText(csvText) {
     .map((line) => line.trim())
     .filter(Boolean);
   if (lines.length < 2) return [];
-  const headers = parseCsvLine(lines[0]).map(normalizeHeader);
+  const headerLine = lines[0];
+  const commaCount = (headerLine.match(/,/g) || []).length;
+  const semicolonCount = (headerLine.match(/;/g) || []).length;
+  const delimiter = semicolonCount > commaCount ? ";" : ",";
+  const headers = parseCsvLine(headerLine, delimiter).map(normalizeHeader);
   const rows = [];
   for (let i = 1; i < lines.length; i += 1) {
-    const cols = parseCsvLine(lines[i]);
+    const cols = parseCsvLine(lines[i], delimiter);
     const row = {};
     headers.forEach((header, idx) => {
       row[header] = cols[idx] ?? "";
@@ -1044,6 +1078,31 @@ function parseCsvText(csvText) {
     rows.push(row);
   }
   return rows;
+}
+
+function parseSpreadsheetFile(filePath) {
+  const workbook = XLSX.readFile(filePath, { cellDates: false, raw: false });
+  if (!workbook?.SheetNames?.length) return [];
+  const firstSheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[firstSheetName];
+  if (!sheet) return [];
+  const rows = XLSX.utils.sheet_to_json(sheet, { defval: "", raw: false });
+  return rows.map((row) => {
+    const normalized = {};
+    Object.keys(row || {}).forEach((key) => {
+      normalized[normalizeHeader(key)] = String(row[key] ?? "").trim();
+    });
+    return normalized;
+  });
+}
+
+function parseImportFileRows(file) {
+  const ext = path.extname(String(file?.originalname || file?.path || "")).toLowerCase();
+  if (ext === ".xlsx" || ext === ".xls" || ext === ".ods") {
+    return parseSpreadsheetFile(file.path);
+  }
+  const csvText = fs.readFileSync(file.path, "utf8");
+  return parseCsvText(csvText);
 }
 
 function randomCaseSuffix(length = 6) {
@@ -1427,15 +1486,17 @@ app.post("/api/public/cases", publicFormLimiter, maybeUpload, async (req, res) =
       autorizacion === "true" || autorizacion === true ? 1 : 0,
       files.length ? JSON.stringify(files) : null,
       cleanText(plan_elegido, 120),
-      caseCode
+      caseCode,
+      "Pendiente",
+      "Pendiente"
     ].map((value) => (value === undefined ? null : value));
 
     run(
       `INSERT INTO cases (
         id, user_id, categoria, detalle, estado, nombre_completo, dni_cuit, email_contacto, telefono,
         entidad, tipo_entidad, monto_valor, monto_escala, monto_moneda, medios_pago, relato,
-        autorizacion, adjuntos, plan_elegido, case_code
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        autorizacion, adjuntos, plan_elegido, case_code, prioridad, riesgo
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       insertValues
     );
 
@@ -2268,12 +2329,14 @@ app.post("/api/cases", authRequired, maybeUpload, async (req, res) => {
 
     const caseId = randomUUID();
     const estadoInicial = "Recibido";
+    const prioridadInicial = "Pendiente";
+    const riesgoInicial = "Pendiente";
     run(
       `INSERT INTO cases (
         id, user_id, categoria, detalle, estado, nombre_completo, dni_cuit, email_contacto, telefono,
         entidad, tipo_entidad, monto_valor, monto_escala, monto_moneda, medios_pago, relato,
-        autorizacion, adjuntos, plan_elegido, case_code
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        autorizacion, adjuntos, plan_elegido, case_code, prioridad, riesgo
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         caseId,
         req.user.sub,
@@ -2294,7 +2357,9 @@ app.post("/api/cases", authRequired, maybeUpload, async (req, res) => {
         autorizacion === "true" || autorizacion === true ? 1 : 0,
         files.length ? JSON.stringify(files) : null,
         planElegidoClean,
-        caseCode
+        caseCode,
+        prioridadInicial,
+        riesgoInicial
       ]
     );
 
@@ -2432,7 +2497,17 @@ app.post("/api/cases/:id/updates", authRequired, async (req, res) => {
     if (!validated.ok) {
       return res.status(400).json({ error: validated.error });
     }
-    const { mensaje, estado, prioridad } = validated.data;
+    const {
+      mensaje,
+      estado,
+      prioridad,
+      riesgo,
+      documentacion_estado,
+      observaciones_empresa,
+      observaciones_rfa,
+      descripcion_breve
+    } =
+      validated.data;
 
     const caso = get("SELECT * FROM cases WHERE id = ?", [req.params.id]);
     if (!caso) return res.status(404).json({ error: "Caso no encontrado" });
@@ -2447,10 +2522,20 @@ app.post("/api/cases/:id/updates", authRequired, async (req, res) => {
     }
 
     const allowedStatusEnterprise = new Set([
+      "pendiente",
+      "en analisis",
+      "respondido",
+      "pendiente de revision",
+      "en analisis interno",
+      "falta documentacion",
+      "a la espera de respuesta de la entidad",
+      "observacion interna",
+      "resuelto",
+      "cerrado",
+      // compatibilidad
       "recibido",
       "en analisis",
-      "pendiente interno",
-      "cerrado"
+      "pendiente interno"
     ]);
     const allowedStatusAdmin = new Set([
       "recibido",
@@ -2463,10 +2548,22 @@ app.post("/api/cases/:id/updates", authRequired, async (req, res) => {
       "respuesta recibida",
       "cerrado"
     ]);
-    const allowedPriority = new Set(["alta", "media", "baja"]);
+    const allowedPriority = new Set([
+      "pendiente",
+      "normal",
+      "alta",
+      "critica",
+      // compatibilidad
+      "media",
+      "baja"
+    ]);
+    const allowedRisk = new Set(["pendiente", "bajo", "medio", "alto", "critico"]);
+    const allowedDocumentation = new Set(["completa", "incompleta", "en revision"]);
 
     const normalizedStatus = normalizeCompareText(estado);
     const normalizedPriority = normalizeCompareText(prioridad);
+    const normalizedRisk = normalizeCompareText(riesgo);
+    const normalizedDocumentation = normalizeCompareText(documentacion_estado);
 
     if (isAdmin && estado && !allowedStatusAdmin.has(normalizedStatus)) {
       return res.status(400).json({ error: "Estado invalido" });
@@ -2477,6 +2574,12 @@ app.post("/api/cases/:id/updates", authRequired, async (req, res) => {
     if (prioridad && !allowedPriority.has(normalizedPriority)) {
       return res.status(400).json({ error: "Prioridad invalida" });
     }
+    if (riesgo && !allowedRisk.has(normalizedRisk)) {
+      return res.status(400).json({ error: "Riesgo invalido" });
+    }
+    if (documentacion_estado && !allowedDocumentation.has(normalizedDocumentation)) {
+      return res.status(400).json({ error: "Estado de documentacion invalido" });
+    }
 
     const messageText = isNonEmptyString(mensaje)
       ? cleanText(mensaje, 3000)
@@ -2486,22 +2589,64 @@ app.post("/api/cases/:id/updates", authRequired, async (req, res) => {
     if (!isEnterprise && !messageText) {
       return res.status(400).json({ error: "El mensaje es obligatorio" });
     }
+    if (
+      !isAdmin &&
+      isNonEmptyString(observaciones_rfa)
+    ) {
+      return res.status(403).json({ error: "Solo RFA puede editar observaciones tecnicas" });
+    }
 
     const updateId = randomUUID();
+    const updateStatusValue = isAdmin ? (estado || null) : null;
     run("INSERT INTO case_updates (id, case_id, author_id, mensaje, estado, prioridad) VALUES (?, ?, ?, ?, ?, ?)", [
       updateId,
       req.params.id,
       req.user.sub,
       messageText,
-      estado || null,
+      updateStatusValue,
       prioridad || null
     ]);
 
-    const newEstado = estado || caso.estado;
-    const newPrioridad = prioridad || caso.prioridad || null;
+    const normalizePriorityValue = (value, fallback) => {
+      if (!value) return fallback || null;
+      if (normalizedPriority === "pendiente") return "Pendiente";
+      if (normalizedPriority === "baja") return "Baja";
+      if (normalizedPriority === "media" || normalizedPriority === "normal") return "Media";
+      if (normalizedPriority === "critica") return "Crítica";
+      if (normalizedPriority === "alta") return "Alta";
+      return value;
+    };
+    const normalizeRiskValue = (value, fallback) => {
+      if (!value) return fallback || null;
+      if (normalizedRisk === "pendiente") return "Pendiente";
+      if (normalizedRisk === "critico") return "Crítico";
+      if (normalizedRisk === "alto") return "Alto";
+      if (normalizedRisk === "medio") return "Medio";
+      if (normalizedRisk === "bajo") return "Bajo";
+      return value;
+    };
+    const normalizeDocumentationValue = (value, fallback) => {
+      if (!value) return fallback || null;
+      if (normalizedDocumentation === "en revision") return "En revisión";
+      if (normalizedDocumentation === "completa") return "Completa";
+      if (normalizedDocumentation === "incompleta") return "Incompleta";
+      return value;
+    };
+    const newEstado = isAdmin ? (estado || caso.estado) : caso.estado;
+    const newPrioridad = normalizePriorityValue(prioridad, caso.prioridad);
+    const newRiesgo = normalizeRiskValue(riesgo, caso.riesgo);
+    const newDocumentacion = normalizeDocumentationValue(documentacion_estado, caso.documentacion_estado);
+    const newObsEmpresa =
+      observaciones_empresa !== undefined ? cleanText(observaciones_empresa, 3000) : caso.observaciones_empresa || null;
+    const newObsRfa =
+      observaciones_rfa !== undefined ? cleanText(observaciones_rfa, 3000) : caso.observaciones_rfa || null;
+    const newDescripcion =
+      descripcion_breve !== undefined ? cleanText(descripcion_breve, 4000) : cleanText(caso.detalle, 4000);
     run(
-      "UPDATE cases SET estado = ?, prioridad = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-      [newEstado, newPrioridad, req.params.id]
+      `UPDATE cases
+       SET estado = ?, prioridad = ?, riesgo = ?, documentacion_estado = ?, observaciones_empresa = ?, observaciones_rfa = ?, detalle = ?, relato = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [newEstado, newPrioridad, newRiesgo, newDocumentacion, newObsEmpresa, newObsRfa, newDescripcion, newDescripcion, req.params.id]
     );
     logSecurityEvent(req, {
       userId: req.user.sub,
@@ -2514,6 +2659,10 @@ app.post("/api/cases/:id/updates", authRequired, async (req, res) => {
         toEstado: newEstado || null,
         fromPrioridad: caso.prioridad || null,
         toPrioridad: newPrioridad || null,
+        fromRiesgo: caso.riesgo || null,
+        toRiesgo: newRiesgo || null,
+        fromDocumentacion: caso.documentacion_estado || null,
+        toDocumentacion: newDocumentacion || null,
         actorRole: req.user.role
       }
     });
@@ -2529,12 +2678,17 @@ app.post("/api/cases/:id/updates", authRequired, async (req, res) => {
     return res.status(500).json({ error: "Error al crear actualizacion" });
   }
 });
-app.post("/api/cases/import", authRequired, adminOnly, upload.single("file"), async (req, res) => {
+app.post("/api/cases/import", authRequired, importUpload.any(), async (req, res) => {
   let importedCount = 0;
   let rejectedCount = 0;
   let importedFailed = false;
+  let targetEnterpriseUserId = "";
   try {
-    const enterpriseUserId = String(req.body?.enterprise_user_id || "").trim();
+    if (req.user?.role !== "admin" && req.user?.role !== "enterprise") {
+      return res.status(403).json({ error: "Acceso restringido" });
+    }
+    const requestedEnterpriseUserId = String(req.body?.enterprise_user_id || "").trim();
+    const enterpriseUserId = req.user?.role === "enterprise" ? req.user.sub : requestedEnterpriseUserId;
     if (!enterpriseUserId) {
       return res.status(400).json({ error: "Debes seleccionar un usuario empresa" });
     }
@@ -2542,85 +2696,294 @@ app.post("/api/cases/import", authRequired, adminOnly, upload.single("file"), as
     if (!enterpriseUser || enterpriseUser.role !== "enterprise") {
       return res.status(400).json({ error: "Usuario empresa invalido" });
     }
-    if (!req.file?.path) {
-      return res.status(400).json({ error: "Debes adjuntar un archivo CSV" });
+    targetEnterpriseUserId = enterpriseUser.id;
+    const files = (Array.isArray(req.files) ? req.files : []).filter((f) =>
+      f?.fieldname === "files" || f?.fieldname === "file"
+    );
+    if (!files.length) {
+      return res.status(400).json({ error: "Debes adjuntar al menos un archivo (CSV/Excel)" });
     }
-
-    const csvText = fs.readFileSync(req.file.path, "utf8");
-    const rows = parseCsvText(csvText);
+    const rows = [];
+    files.forEach((file) => {
+      const fileRows = parseImportFileRows(file);
+      fileRows.forEach((row) => rows.push({ ...row, __source_file: file.originalname || file.filename }));
+    });
     if (!rows.length) {
-      return res.status(400).json({ error: "Archivo vacio o sin filas validas" });
+      return res.status(400).json({ error: "Archivos vacios o sin filas validas" });
     }
 
-    const allowedStatus = ["Recibido", "En analisis", "Pendiente interno", "Cerrado"];
-    const allowedPriority = ["Alta", "Media", "Baja"];
+    const allowedDocumentation = ["Sin documentación", "Parcial", "Completa", "Incompleta", "En revisión"];
+    const normalizeImportDate = (value) => {
+      const raw = String(value || "").trim();
+      if (!raw) return new Date().toISOString().slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+      const slash = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+      if (slash) {
+        const day = String(slash[1]).padStart(2, "0");
+        const month = String(slash[2]).padStart(2, "0");
+        const year = slash[3].length === 2 ? `20${slash[3]}` : slash[3];
+        return `${year}-${month}-${day}`;
+      }
+      const dash = raw.match(/^(\d{1,2})-(\d{1,2})-(\d{2,4})$/);
+      if (dash) {
+        const day = String(dash[1]).padStart(2, "0");
+        const month = String(dash[2]).padStart(2, "0");
+        const year = dash[3].length === 2 ? `20${dash[3]}` : dash[3];
+        return `${year}-${month}-${day}`;
+      }
+      const parsed = Date.parse(raw);
+      if (!Number.isNaN(parsed)) return new Date(parsed).toISOString().slice(0, 10);
+      return new Date().toISOString().slice(0, 10);
+    };
+    const normalizeDocumento = (value) => String(value || "").replace(/[^\dA-Za-z]/g, "").trim();
+    const normalizeImportStatus = (value) => {
+      const v = normalizeHeader(value).replace(/_/g, " ");
+      if (!v) return "Pendiente";
+      if (v === "pendiente de revision" || v === "recibido" || v === "pendiente" || v === "abierto") {
+        return "Pendiente";
+      }
+      if (v === "en analisis" || v === "en analisis interno") return "En análisis";
+      if (v === "respondido" || v === "resuelto" || v === "respuesta recibida") return "Respondido";
+      if (v === "cerrado") return "Cerrado";
+      return "";
+    };
+    const normalizeImportPriority = (value) => {
+      const v = normalizeHeader(value).replace(/_/g, " ");
+      if (!v) return "Media";
+      if (v === "baja") return "Baja";
+      if (v === "media" || v === "normal") return "Media";
+      if (v === "alta" || v === "urgente") return "Alta";
+      if (v === "critica" || v === "critico") return "Crítica";
+      return "";
+    };
+    const normalizeImportRisk = (value) => {
+      const v = normalizeHeader(value).replace(/_/g, " ");
+      if (!v) return "Medio";
+      if (v === "bajo") return "Bajo";
+      if (v === "medio") return "Medio";
+      if (v === "alto") return "Alto";
+      if (v === "critico" || v === "critica") return "Crítico";
+      return "";
+    };
+    const normalizeImportDocumentation = (value) => {
+      const v = normalizeHeader(value).replace(/_/g, " ");
+      if (!v) return "Sin documentación";
+      if (v === "sin documentacion") return "Sin documentación";
+      if (v === "completa") return "Completa";
+      if (v === "parcial" || v === "parcialmente completa" || v === "incompleta") return "Parcial";
+      if (v === "en revision" || v === "revision") return "Parcial";
+      return "";
+    };
     const importedRows = [];
     const rejectedRows = [];
+    const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
+    const humanizeLocalPart = (value) => {
+      const local = String(value || "").split("@")[0] || "";
+      const cleaned = local.replace(/[._-]+/g, " ").replace(/\s+/g, " ").trim();
+      if (!cleaned) return "Cliente sin nombre";
+      return cleaned
+        .split(" ")
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(" ");
+    };
 
     rows.forEach((row, idx) => {
       const line = idx + 2;
-      const caseCode = String(row.case_code || "").trim();
-      const empresa = String(row.empresa || "").trim();
-      const fechaCaso = String(row.fecha_caso || "").trim();
-      const clienteNombre = String(row.cliente_nombre || "").trim();
-      const clienteDocumento = String(row.cliente_documento || "").trim();
-      const entidad = String(row.entidad || "").trim();
-      const tipoReclamo = String(row.tipo_reclamo || "").trim();
-      const descripcion = String(row.descripcion || "").trim();
-      const monto = String(row.monto || "").trim();
-      const moneda = String(row.moneda || "").trim().toUpperCase();
-      const canalOrigen = String(row.canal_origen || "").trim();
-      const estado = String(row.estado || "").trim();
-      const prioridad = String(row.prioridad || "").trim();
-      const observaciones = String(row.observaciones_internas || "").trim();
+      const sourceFile = String(row.__source_file || "").trim();
+      const consumedKeys = new Set();
+      const take = (aliases = []) => {
+        for (const key of aliases) {
+          const normalized = normalizeHeader(key);
+          const value = String(row?.[normalized] ?? "").trim();
+          if (value) {
+            consumedKeys.add(normalized);
+            return value;
+          }
+        }
+        return "";
+      };
+      const takeByPattern = (regex) => {
+        const entries = Object.entries(row || {});
+        for (const [key, rawValue] of entries) {
+          if (key === "__source_file" || consumedKeys.has(key)) continue;
+          const value = String(rawValue || "").trim();
+          if (!value) continue;
+          if (regex.test(key)) {
+            consumedKeys.add(key);
+            return value;
+          }
+        }
+        return "";
+      };
+      const takeEmail = () => {
+        const explicit = take([
+          "email_contacto",
+          "email",
+          "correo",
+          "correo_electronico",
+          "mail",
+          "e_mail",
+          "email_cliente",
+          "email_address"
+        ]);
+        if (explicit) return explicit;
+        const entries = Object.entries(row || {});
+        for (const [key, rawValue] of entries) {
+          if (key === "__source_file" || consumedKeys.has(key)) continue;
+          const value = String(rawValue || "").trim();
+          if (!value) continue;
+          if (isValidEmail(value)) {
+            consumedKeys.add(key);
+            return value;
+          }
+        }
+        return "";
+      };
 
-      if (!caseCode || !fechaCaso || !clienteNombre || !entidad || !tipoReclamo || !descripcion || !estado || !prioridad) {
-        rejectedRows.push({ line, reason: "Faltan campos obligatorios" });
-        return;
-      }
-      if (!allowedStatus.includes(estado)) {
-        rejectedRows.push({ line, reason: "Estado invalido" });
-        return;
-      }
-      if (!allowedPriority.includes(prioridad)) {
-        rejectedRows.push({ line, reason: "Prioridad invalida" });
-        return;
-      }
-      const duplicate = get("SELECT id FROM cases WHERE case_code = ? AND enterprise_user_id = ?", [
-        caseCode,
-        enterpriseUserId
+      const caseCodeRaw = take([
+        "case_code",
+        "codigo",
+        "codigo_rfa",
+        "id_caso",
+        "nro_caso",
+        "numero_caso",
+        "ticket",
+        "numero_ticket"
       ]);
-      if (duplicate) {
-        rejectedRows.push({ line, reason: "Codigo de caso duplicado para esa empresa" });
+      const caseCode = caseCodeRaw || generatePublicCaseCode();
+      const empresa = take(["empresa", "company", "razon_social", "empresa_origen"]);
+      const fechaCaso = normalizeImportDate(
+        take(["fecha_caso", "fecha", "fecha_reclamo", "created_at", "fecha_ingreso", "fecha_alta", "fecha_de_alta"])
+      );
+      const nombre = take(["nombre", "first_name", "nombres"]);
+      const apellido = take(["apellido", "last_name", "apellidos"]);
+      const combinedName = [nombre, apellido].filter(Boolean).join(" ").trim();
+      const clienteNombre =
+        take([
+          "cliente_nombre",
+          "nombre_cliente",
+          "cliente",
+          "nombre_completo",
+          "apellido_y_nombre",
+          "titular",
+          "titular_nombre",
+          "full_name"
+        ]) || combinedName;
+      let clienteDocumento = normalizeDocumento(
+        take([
+          "cliente_documento",
+          "dni",
+          "documento",
+          "documento_numero",
+          "numero_documento",
+          "nro_documento",
+          "n_documento",
+          "dni_cuit",
+          "cuit",
+          "cuil",
+          "identificacion",
+          "id_cliente"
+        ])
+      );
+      if (!clienteDocumento) {
+        const fromIdField = normalizeDocumento(take(["id"]));
+        if (fromIdField && /\d{6,14}/.test(fromIdField)) {
+          clienteDocumento = fromIdField;
+        }
+      }
+      if (!clienteDocumento) {
+        const guessedDoc = normalizeDocumento(takeByPattern(/(dni|documento|cuit|cuil|id)/));
+        if (guessedDoc && /\d{6,14}/.test(guessedDoc)) {
+          clienteDocumento = guessedDoc;
+        }
+      }
+      const emailContacto = takeEmail();
+      const entidad = take(["entidad", "banco", "proveedor", "empresa_reclamada", "plataforma", "grupo_saliente"]);
+      const tipoReclamo =
+        take(["tipo_reclamo", "tipo", "categoria", "motivo", "asunto", "clasificacion", "clasificación"]) ||
+        take(["plan", "servicio", "tipo_plan"]);
+      const descripcion =
+        take(["descripcion", "detalle", "descripcion_del_reclamo", "reclamo", "observaciones", "mensaje", "resumen"]) ||
+        "Caso importado por empresa. Pendiente de ampliación.";
+      const monto = take(["monto", "importe", "monto_valor", "capital", "saldo"]);
+      const moneda = take(["moneda", "currency"]).toUpperCase();
+      const canalOrigen = take(["canal_origen", "canal", "origen"]);
+      const estado = "Pendiente";
+      const prioridad = "Pendiente";
+      const riesgo = "Pendiente";
+      const documentacionEstado = normalizeImportDocumentation(
+        take(["documentacion", "documentacion_estado", "estado_documentacion", "documentacion_status"])
+      );
+      const observaciones = take([
+        "observaciones_internas",
+        "observaciones",
+        "nota",
+        "notas",
+        "comentarios",
+        "observacion"
+      ]);
+
+      const remainingDetails = Object.entries(row || {})
+        .filter(([key, rawValue]) => {
+          if (key === "__source_file") return false;
+          if (consumedKeys.has(key)) return false;
+          return String(rawValue || "").trim().length > 0;
+        })
+        .slice(0, 15)
+        .map(([key, rawValue]) => `${key}: ${String(rawValue || "").trim()}`);
+      const mergedObservaciones = [observaciones, remainingDetails.join(" | ")].filter(Boolean).join(" | ");
+
+      const nombreFinal = clienteNombre || humanizeLocalPart(emailContacto) || `Cliente ${line - 1}`;
+      if (emailContacto && !isValidEmail(emailContacto)) {
+        rejectedRows.push({ line, file: sourceFile || null, reason: "Email invalido" });
         return;
+      }
+
+      if (!documentacionEstado || !allowedDocumentation.includes(documentacionEstado)) {
+        rejectedRows.push({ line, file: sourceFile || null, reason: "Documentacion invalida" });
+        return;
+      }
+      if (caseCode) {
+        const duplicate = get("SELECT id FROM cases WHERE case_code = ? AND enterprise_user_id = ?", [
+          caseCode,
+          targetEnterpriseUserId
+        ]);
+        if (duplicate) {
+          rejectedRows.push({ line, file: sourceFile || null, reason: "Codigo de caso duplicado para esa empresa" });
+          return;
+        }
       }
 
       const caseId = randomUUID();
       run(
         `INSERT INTO cases (
-          id, user_id, categoria, detalle, estado, nombre_completo, dni_cuit, entidad,
+          id, user_id, categoria, detalle, estado, nombre_completo, dni_cuit, email_contacto, entidad,
           monto_valor, monto_moneda, relato, autorizacion, case_code, empresa, prioridad,
-          fecha_caso, canal_origen, enterprise_user_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          fecha_caso, canal_origen, enterprise_user_id, riesgo, documentacion_estado, observaciones_empresa
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           caseId,
           req.user.sub,
-          tipoReclamo,
+          tipoReclamo || "Sin plan asignado",
           descripcion,
           estado,
-          clienteNombre,
+          nombreFinal || null,
           clienteDocumento || null,
-          entidad,
+          emailContacto ? emailContacto.toLowerCase() : null,
+          entidad || "Entidad no informada",
           monto || null,
           moneda || null,
           descripcion,
           0,
-          caseCode,
+          caseCode || null,
           empresa || enterpriseUser.email,
           prioridad,
           fechaCaso,
           canalOrigen || null,
-          enterpriseUserId
+          targetEnterpriseUserId,
+          riesgo,
+          documentacionEstado,
+          mergedObservaciones || null
         ]
       );
 
@@ -2628,11 +2991,11 @@ app.post("/api/cases/import", authRequired, adminOnly, upload.single("file"), as
         randomUUID(),
         caseId,
         req.user.sub,
-        observaciones || "Caso importado masivamente por RFA.",
+        mergedObservaciones || "Caso importado masivamente por RFA.",
         estado,
         prioridad
       ]);
-      importedRows.push({ line, case_code: caseCode });
+      importedRows.push({ line, file: sourceFile || null, case_code: caseCode });
     });
 
     importedCount = importedRows.length;
@@ -2654,7 +3017,7 @@ app.post("/api/cases/import", authRequired, adminOnly, upload.single("file"), as
         userId: req.user?.sub || null,
         eventType: "case_import",
         resourceType: "enterprise",
-        resourceId: String(req.body?.enterprise_user_id || ""),
+        resourceId: targetEnterpriseUserId,
         success: !importedFailed && (importedCount > 0 || rejectedCount > 0),
         details: {
           imported: importedCount,
@@ -2664,9 +3027,11 @@ app.post("/api/cases/import", authRequired, adminOnly, upload.single("file"), as
     } catch (_e) {
       // noop
     }
-    if (req.file?.path && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
+    (Array.isArray(req.files) ? req.files : []).forEach((file) => {
+      if (file?.path && fs.existsSync(file.path)) {
+        fs.unlinkSync(file.path);
+      }
+    });
   }
 });
 
