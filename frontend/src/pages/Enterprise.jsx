@@ -79,7 +79,7 @@ export default function Enterprise() {
               claridad documental y control interno para reducir exposición legal y regulatoria.
             </p>
             <p className="text-sm text-slate-300 mt-3 leading-relaxed">
-              Nos enfocamos exclusivamente en la organización profesional del sistema de reclamos. No intervenimos en la
+              Nos enfocamos en la estructuración profesional del sistema de reclamos para fortalecer la capacidad interna de respuesta, mejorar la trazabilidad documental y reducir la exposición regulatoria. No intervenimos en la
               resolución directa frente al cliente final, salvo acuerdo específico.
             </p>
             <p className="text-sm text-slate-300 mt-3 leading-relaxed">
@@ -90,7 +90,7 @@ export default function Enterprise() {
               {[
                 "Trazabilidad documental",
                 "Control regulatorio",
-                "Soporte auditables",
+                "Estructura auditable",
                 "Panel corporativo privado"
               ].map((item) => (
                 <span key={item} className="px-4 py-2 rounded-full text-xs font-semibold rfa-chip">
