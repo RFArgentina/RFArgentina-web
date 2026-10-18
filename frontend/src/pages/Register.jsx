@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { apiRequest } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -9,40 +9,21 @@ export default function Register() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const [resendStatus, setResendStatus] = useState("");
   const [loading, setLoading] = useState(false);
-  const [resending, setResending] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [emailVerificationEnabled, setEmailVerificationEnabled] = useState(true);
-  const [acceptLegal, setAcceptLegal] = useState(false);
+  const [acceptPolicies, setAcceptPolicies] = useState(false);
 
-  useEffect(() => {
-    let active = true;
-    apiRequest("/auth/config")
-      .then((data) => {
-        if (!active) return;
-        setEmailVerificationEnabled(Boolean(data?.emailVerificationEnabled));
-      })
-      .catch(() => {
-        if (!active) return;
-        setEmailVerificationEnabled(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError("");
     setSuccess("");
-    setResendStatus("");
     if (password !== confirmPassword) {
       setError("Las contraseñas no coinciden.");
       return;
     }
-    if (!acceptLegal) {
+    if (!acceptPolicies) {
       setError("Debes aceptar los Términos y la Política de Privacidad.");
       return;
     }
@@ -52,32 +33,11 @@ export default function Register() {
         method: "POST",
         body: JSON.stringify({ email, password })
       });
-      setSuccess(data.message || "Registro creado. Revisa tu email para verificar la cuenta.");
+      setSuccess(data.message || "Registro creado correctamente. Ya puedes iniciar sesión.");
     } catch (err) {
-      if (err.code === "EMAIL_SERVICE_NOT_CONFIGURED") {
-        setError("El servicio de verificación por email no está configurado. Contacta al administrador.");
-      } else {
-        setError(err.message);
-      }
+      setError(err.message);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleResend = async () => {
-    if (!email) return;
-    setResendStatus("");
-    setResending(true);
-    try {
-      const data = await apiRequest("/auth/resend-verification", {
-        method: "POST",
-        body: JSON.stringify({ email })
-      });
-      setResendStatus(data.message || "Email reenviado.");
-    } catch (err) {
-      setResendStatus(err.message);
-    } finally {
-      setResending(false);
     }
   };
 
@@ -89,7 +49,7 @@ export default function Register() {
             <p className="text-xs uppercase tracking-[0.3em] text-emerald-300 mb-3">RFA</p>
             <h1 className="text-3xl font-bold mb-3">Crea tu cuenta</h1>
             <p className="text-slate-200">
-              Accede a planes, seguimiento y documentacion desde un panel centralizado.
+              Accede al seguimiento y la documentacion desde un panel centralizado.
             </p>
           </div>
           <div className="space-y-3 text-sm text-slate-200">
@@ -105,12 +65,7 @@ export default function Register() {
         </div>
         <div className="bg-white border border-slate-200 rounded-2xl p-8 shadow-xl">
           <h1 className="text-3xl font-bold mb-2">Crear cuenta</h1>
-          <p className="text-slate-600 mb-6">Registrate para acceder a los planes y al seguimiento.</p>
-          {!emailVerificationEnabled && (
-            <p className="text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4 text-sm">
-              La verificación por email está desactivada en este entorno.
-            </p>
-          )}
+          <p className="text-slate-600 mb-6">Registrate para acceder al seguimiento de tus casos.</p>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm text-slate-700" htmlFor="register-email">Email</label>
@@ -173,8 +128,8 @@ export default function Register() {
               <input
                 type="checkbox"
                 className="mt-1"
-                checked={acceptLegal}
-                onChange={(e) => setAcceptLegal(e.target.checked)}
+                checked={acceptPolicies}
+                onChange={(e) => setAcceptPolicies(e.target.checked)}
               />
               <span>
                 Acepto los <Link to="/terminos" className="text-emerald-700 font-semibold">Términos y Condiciones</Link> y la{" "}
@@ -183,9 +138,6 @@ export default function Register() {
             </label>
             {error && <p className="text-rose-600 text-sm">{error}</p>}
             {success && <p className="text-emerald-600 text-sm">{success}</p>}
-            {resendStatus && (
-              <p className="text-slate-600 text-sm">{resendStatus}</p>
-            )}
             <Button
               type="submit"
               className="w-full bg-emerald-600 hover:bg-emerald-700 text-white"
@@ -200,16 +152,7 @@ export default function Register() {
               Iniciar sesión
             </Link>
           </p>
-          <div className="mt-4">
-            <Button
-              type="button"
-              className="w-full bg-white/10 hover:bg-white/20 text-slate-700 border border-slate-200"
-              onClick={handleResend}
-              disabled={resending || !email || !emailVerificationEnabled}
-            >
-              {resending ? "Reenviando..." : "Reenviar email de verificación"}
-            </Button>
-          </div>
+
         </div>
       </div>
     </div>

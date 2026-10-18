@@ -18,8 +18,9 @@
 - `REFRESH_TOKEN_SAME_SITE=lax|strict|none`
 - `BACKUP_DIR=./backups`
 - `BACKUP_RETENTION_DAYS=14`
-- `AUTH_REQUIRE_EMAIL_VERIFICATION=true|false`
-- `SENDGRID_API_KEY` y `EMAIL_FROM` si se usa verificacion por email.
+
+## Email
+RFA no realiza envio ni verificacion automatica de email. El email se conserva como dato de contacto, registro e inicio de sesion; la verificacion por correo no condiciona el alta ni el acceso.
 
 ## 3) Checklist antes de deploy
 - Verificar que `.env` NO este versionado.
@@ -36,6 +37,8 @@
 - `helmet` para headers de seguridad.
 - CORS estricto por whitelist.
 - Rate limiting global y especifico en auth/formulario publico.
+- Los limites usan el store en memoria de express-rate-limit: al escalar a multiples instancias, configurar un store compartido antes de aumentar instancias.
+- Limites por IP en ventanas de 15 minutos: login 10, refresh 30, consulta publica 15, creacion de caso 8, aceptar propuesta 5, comprobante 5, consultas empresa 5, token de accion admin 10, importacion admin 5, carga autenticada 10. Registro y otras acciones de autenticacion conservan su limite de autenticacion existente.
 - Limites de payload JSON y de archivos.
 - Filtro de tipos de archivo permitidos.
 - Bloqueo temporal por intentos fallidos de login.
@@ -58,3 +61,6 @@
   - Revocar/rotar API keys de email.
   - Cambiar credenciales de usuarios admin.
   - Restaurar backup si hay corrupcion de datos.
+- El access token se conserva en localStorage por decision de alcance de esta fase; evaluar migracion futura a cookie segura cuando se planifique un cambio de autenticacion.
+- Adjuntos: maximo 5 por caso, 25 MiB por archivo y 50 MiB por solicitud; validar firma/contenedor, no publicar `UPLOADS_PATH` como contenido estatico y monitorear/cuotar el volumen persistente desde el proveedor.
+- Importaciones: solo admin, hasta 5 archivos, 10 MiB cada uno, 25 MiB total, 10.000 filas y 200 columnas. Se aceptan CSV y XLSX; el XLSX se procesa con `read-excel-file` en un Worker con limite de memoria y timeout. No se evalúan fórmulas. XLS y ODS ya no se aceptan porque la librería sustituida no los soporta.

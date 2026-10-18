@@ -14,6 +14,7 @@ import Terms from "./pages/Terms";
 import Privacy from "./pages/Privacy";
 import Cookies from "./pages/Cookies";
 import ErrorBoundary from "./components/ErrorBoundary";
+import CookieConsent from "./components/CookieConsent";
 
 const Home = () => {
   return <RFALanding />;
@@ -40,6 +41,7 @@ function App() {
             <Route path="/cookies" element={<Cookies />} />
           </Routes>
         </ErrorBoundary>
+        <CookieConsent />
       </BrowserRouter>
       <Toaster />
     </div>

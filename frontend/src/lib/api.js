@@ -1,4 +1,4 @@
-import { getToken } from "./auth";
+import { getToken, setToken } from "./auth";
 
 const BACKEND_FALLBACK_URL = "https://rfa-backend-1.onrender.com";
 
@@ -15,6 +15,7 @@ function resolveApiBase() {
 
 const API_BASE = resolveApiBase();
 const CSRF_COOKIE = process.env.REACT_APP_CSRF_COOKIE_NAME || "rfa_csrf_token";
+let refreshPromise = null;
 
 function getCookieValue(name) {
   if (typeof document === "undefined") return "";
@@ -24,13 +25,39 @@ function getCookieValue(name) {
   return decodeURIComponent(parts.pop().split(";").shift() || "");
 }
 
+async function refreshAccessToken(signal) {
+  if (!refreshPromise) {
+    refreshPromise = (async () => {
+      const csrfToken = getCookieValue(CSRF_COOKIE);
+      const response = await fetch(`${API_BASE}/auth/refresh`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {})
+        },
+        credentials: "include",
+        signal
+      });
+      if (!response.ok) return false;
+      const data = await response.json();
+      if (!data?.token) return false;
+      setToken(data.token);
+      return true;
+    })().finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+}
+
 export async function apiRequest(path, options = {}) {
+  const { skipAuthRefresh = false, ...requestOptions } = options;
   const token = getToken();
-  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
-  const method = String(options.method || "GET").toUpperCase();
+  const isFormData = typeof FormData !== "undefined" && requestOptions.body instanceof FormData;
+  const method = String(requestOptions.method || "GET").toUpperCase();
   const headers = {
     ...(isFormData ? {} : { "Content-Type": "application/json" }),
-    ...(options.headers || {})
+    ...(requestOptions.headers || {})
   };
   if (token) headers.Authorization = `Bearer ${token}`;
   if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
@@ -41,7 +68,7 @@ export async function apiRequest(path, options = {}) {
   }
 
   const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
+    ...requestOptions,
     headers,
     credentials: "include"
   });
@@ -59,6 +86,16 @@ export async function apiRequest(path, options = {}) {
   }
 
   if (!response.ok) {
+    if (response.status === 401 && !path.startsWith("/auth/") && !skipAuthRefresh) {
+      try {
+        if (await refreshAccessToken(requestOptions.signal)) {
+          const retryOptions = { ...requestOptions, skipAuthRefresh: true };
+          return apiRequest(path, retryOptions);
+        }
+      } catch (refreshError) {
+        if (refreshError?.name === "AbortError") throw refreshError;
+      }
+    }
     let message = (data && data.error) || "Error en la solicitud";
     if (!data && text) {
       // CRA dev proxy returns plain text like: "Proxy error: Could not proxy request ..."
@@ -69,6 +106,7 @@ export async function apiRequest(path, options = {}) {
       }
     }
     const err = new Error(message);
+    err.status = response.status;
     if (data && data.code) err.code = data.code;
     throw err;
   }

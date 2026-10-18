@@ -1,5 +1,5 @@
 ﻿import { Link } from "react-router-dom";
-import { plans } from "@/data/plans";
+import { analysisService, plans } from "@/data/plans";
 import { Button } from "@/components/ui/button";
 
 export default function Plans() {
@@ -8,18 +8,26 @@ export default function Plans() {
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-10">
           <p className="text-emerald-300 uppercase tracking-[0.3em] text-xs font-semibold mb-3">
-            Planes disponibles
+            Modalidades de servicio
           </p>
-          <h1 className="text-3xl md:text-4xl font-bold mb-3">Elegi el plan ideal</h1>
+          <h1 className="text-3xl md:text-4xl font-bold mb-3">Primero analizamos tu caso</h1>
           <p className="text-slate-300">
-            Elegi un plan y carga tu caso en el formulario publico, sin login de usuario.
+            Iniciá el reclamo sin costo. Si podemos intervenir, te informamos el alcance, el precio y qué incluye el servicio antes de comenzar.
           </p>
+        </div>
+
+        <div className="max-w-3xl mx-auto mb-8 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-6 text-center">
+          <p className="text-xs uppercase tracking-[0.25em] text-emerald-300 font-semibold mb-2">
+            {analysisService.priceLabel}
+          </p>
+          <h2 className="text-2xl font-bold text-white mb-2">{analysisService.name}</h2>
+          <p className="text-slate-200 leading-relaxed">{analysisService.summary}</p>
         </div>
 
         <div className="grid md:grid-cols-2 gap-6 mb-10">
           {plans.map((plan) => (
             <div
-              key={plan.name}
+              key={plan.code}
               className={`bg-white/95 border rounded-2xl p-6 ${
                 plan.featured ? "border-emerald-400 shadow-2xl" : "border-white/20"
               }`}
@@ -28,8 +36,9 @@ export default function Plans() {
                 {plan.period}
               </p>
               <h3 className="text-xl font-bold text-slate-900 mb-2">{plan.name}</h3>
-              {plan.priceUsd && <p className="text-slate-900 font-semibold">{plan.priceUsd}</p>}
-              <p className="text-3xl font-extrabold text-slate-950 mb-4">{plan.price}</p>
+              <p className="text-3xl font-extrabold text-slate-950 mb-1">{plan.priceLabel}</p>
+              <p className="text-xs uppercase tracking-wide text-slate-500 mb-4">{plan.currency}</p>
+              <p className="text-sm text-slate-600 mb-4">{plan.summary}</p>
               <ul className="space-y-2 text-sm text-slate-700">
                 {plan.features.map((item) => (
                   <li key={item}>• {item}</li>
@@ -39,10 +48,21 @@ export default function Plans() {
           ))}
         </div>
 
+        <div className="max-w-3xl mx-auto mb-10 text-center text-slate-300 space-y-2">
+          <p className="font-semibold text-slate-100">Casos que requieren mayor trabajo</p>
+          <p>
+            Algunos casos reciben un presupuesto personalizado según el volumen documental, la cantidad de intervinientes,
+            los antecedentes, la reconstrucción necesaria y la carga de trabajo. El precio no depende del monto reclamado.
+          </p>
+          <p>
+            No comenzamos ninguna gestión paga sin informarte previamente el alcance, el precio y qué incluye el servicio.
+          </p>
+        </div>
+
         <div className="flex flex-wrap justify-center gap-4">
           <Link to="/crear-caso">
             <Button className="bg-emerald-500 hover:bg-emerald-600 text-white">
-              Cargar mi caso
+              Iniciar reclamo sin costo
             </Button>
           </Link>
           <Link to="/consultar-caso">

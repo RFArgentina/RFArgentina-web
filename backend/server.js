@@ -5,18 +5,18 @@ import cookieParser from "cookie-parser";
 import helmet from "helmet";
 import axios from "axios";
 import { parseStringPromise } from "xml2js";
-import * as XLSX from "xlsx";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import sgMail from "@sendgrid/mail";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import initSqlJs from "sql.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { randomBytes, randomUUID, createHash } from "crypto";
+import { randomBytes, randomInt, randomUUID, createHash } from "crypto";
 import multer from "multer";
+import { Worker } from "worker_threads";
+import { migratePersistentDisk } from "./persistent-disk-migration.js";
 
 dotenv.config();
 
@@ -29,21 +29,37 @@ const CORS_ORIGINS = (process.env.CORS_ORIGINS || "").split(",").map((v) => v.tr
 const JWT_SECRET = process.env.JWT_SECRET || "";
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "").split(",").map((v) => v.trim().toLowerCase()).filter(Boolean);
 const ADMIN_BOOTSTRAP_PASSWORD = process.env.ADMIN_BOOTSTRAP_PASSWORD || "";
-const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || "";
-const EMAIL_FROM = process.env.EMAIL_FROM || "";
-const EMAIL_AUTOMATIC_ENABLED = String(process.env.EMAIL_AUTOMATIC_ENABLED || "false").toLowerCase() === "true";
-const CAN_SEND_EMAIL = Boolean(SENDGRID_API_KEY && EMAIL_FROM);
-const CAN_SEND_AUTOMATIC_EMAIL = CAN_SEND_EMAIL && EMAIL_AUTOMATIC_ENABLED;
-const AUTH_REQUIRE_EMAIL_VERIFICATION_RAW = String(
-  process.env.AUTH_REQUIRE_EMAIL_VERIFICATION ?? "false"
-).toLowerCase() === "true";
-const AUTH_REQUIRE_EMAIL_VERIFICATION = AUTH_REQUIRE_EMAIL_VERIFICATION_RAW && CAN_SEND_AUTOMATIC_EMAIL;
-const EMAIL_VERIFICATION_ENABLED = AUTH_REQUIRE_EMAIL_VERIFICATION && CAN_SEND_AUTOMATIC_EMAIL;
 const APP_BASE_URL = process.env.APP_BASE_URL || "http://localhost:3000";
 const SQLITE_PATH = process.env.SQLITE_PATH || "./rfa.db";
+const UPLOADS_PATH = process.env.UPLOADS_PATH || "./uploads";
+const CASE_ATTACHMENT_MAX_FILES = 5;
+const CASE_ATTACHMENT_MAX_FILE_BYTES = 25 * 1024 * 1024;
+const PUBLIC_CASE_ATTACHMENT_MAX_TOTAL_BYTES = 50 * 1024 * 1024;
+const IMPORT_MAX_FILES = 5;
+const IMPORT_MAX_FILE_BYTES = 10 * 1024 * 1024;
+const IMPORT_MAX_TOTAL_BYTES = 25 * 1024 * 1024;
+const IMPORT_MAX_ROWS = 10000;
+const IMPORT_MAX_COLUMNS = 200;
+const PUBLIC_ACTION_TOKEN_TTL_HOURS = 72;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = path.resolve(__dirname, SQLITE_PATH);
-const UPLOADS_DIR = path.resolve(__dirname, "uploads");
+const UPLOADS_DIR = path.resolve(__dirname, UPLOADS_PATH);
+if (process.env.MIGRATE_TO_PERSISTENT_DISK === "true") {
+  try {
+    const migration = migratePersistentDisk({
+      enabled: true,
+      sourceDbPath: path.resolve(__dirname, "./rfa.db"),
+      destinationDbPath: DB_PATH,
+      sourceUploadsPath: path.resolve(__dirname, "./uploads"),
+      destinationUploadsPath: UPLOADS_DIR,
+      backupDirectory: path.resolve(__dirname, process.env.BACKUP_DIR || "./backups")
+    });
+    console.log("PERSISTENT DISK MIGRATION:", migration.status, migration.uploadsCopied, migration.uploadsExisting);
+  } catch (error) {
+    console.error("PERSISTENT DISK MIGRATION FAILED:", error.code || "MIGRATION_ERROR");
+    process.exit(1);
+  }
+}
 const TRUST_PROXY_RAW = String(process.env.TRUST_PROXY ?? "false").trim().toLowerCase();
 const TRUST_PROXY = (() => {
   if (!TRUST_PROXY_RAW || TRUST_PROXY_RAW === "false" || TRUST_PROXY_RAW === "0" || TRUST_PROXY_RAW === "off") {
@@ -73,7 +89,22 @@ const REFRESH_TOKEN_SECURE_COOKIE = String(process.env.REFRESH_TOKEN_SECURE_COOK
 const REFRESH_TOKEN_SAME_SITE = process.env.REFRESH_TOKEN_SAME_SITE || "lax";
 const USER_RETENTION_DAYS = Number(process.env.USER_RETENTION_DAYS || 90);
 const DATA_PURGE_INTERVAL_HOURS = Number(process.env.DATA_PURGE_INTERVAL_HOURS || 24);
+const DATA_PURGE_ENABLED = String(process.env.DATA_PURGE_ENABLED || "true").trim().toLowerCase() !== "false";
 const DB_FLUSH_INTERVAL_MS = Number(process.env.DB_FLUSH_INTERVAL_MS || 1500);
+const POLICY_CONSENT_VERSION = "2026-10-09";
+const INITIAL_ANALYSIS_SERVICE_CODE = "analysis";
+const PARTICULAR_SERVICE_CODES = new Set(["analysis", "professional-folder", "rfa-management"]);
+const PAID_SERVICE_CODES = new Set(["professional-folder", "rfa-management"]);
+const COMMERCIAL_STATUSES = new Set(["analysis", "proposal_sent", "accepted", "payment_pending", "paid"]);
+const PARTICULAR_OPERATIONAL_STATUSES = new Set([
+  "received",
+  "in_analysis",
+  "needs_information",
+  "in_progress",
+  "completed",
+  "referred",
+  "not_applicable"
+]);
 
 if (!JWT_SECRET || JWT_SECRET.length < 32) {
   throw new Error("JWT_SECRET debe estar configurado con al menos 32 caracteres");
@@ -93,14 +124,12 @@ const allowedOrigins = CORS_ORIGINS.length
 function isAllowedOrigin(origin) {
   if (!origin) return true;
   if (allowedOrigins.includes(origin)) return true;
+  if (IS_PROD) return false;
   try {
     const parsed = new URL(origin);
     const host = parsed.hostname.toLowerCase();
     const protocol = parsed.protocol.toLowerCase();
     if ((host === "localhost" || host === "127.0.0.1") && ["http:", "https:"].includes(protocol)) {
-      return true;
-    }
-    if ((host === "rfargentina.com" || host === "www.rfargentina.com") && ["http:", "https:"].includes(protocol)) {
       return true;
     }
   } catch {
@@ -125,10 +154,6 @@ function validateRuntimeSecurityConfig() {
 
   if (sameSite === "none" && !REFRESH_TOKEN_SECURE_COOKIE) {
     issues.push("REFRESH_TOKEN_SAME_SITE=none requiere REFRESH_TOKEN_SECURE_COOKIE=true");
-  }
-
-  if (AUTH_REQUIRE_EMAIL_VERIFICATION_RAW && !CAN_SEND_AUTOMATIC_EMAIL) {
-    issues.push("AUTH_REQUIRE_EMAIL_VERIFICATION=true requiere EMAIL_AUTOMATIC_ENABLED=true, SENDGRID_API_KEY y EMAIL_FROM");
   }
 
   if (!Number.isFinite(USER_RETENTION_DAYS) || USER_RETENTION_DAYS < 30 || USER_RETENTION_DAYS > 365) {
@@ -195,12 +220,45 @@ const authLimiter = rateLimit({
   message: { error: "Demasiados intentos de autenticacion, espera unos minutos" }
 });
 
-const publicFormLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 40,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: "Demasiados envios, intenta nuevamente en unos minutos" }
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false,
+  message: { error: "Demasiados intentos. Intenta nuevamente en unos minutos" }
+});
+const refreshLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false,
+  message: { error: "Demasiadas solicitudes. Intenta nuevamente en unos minutos" }
+});
+const lookupLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 15, standardHeaders: true, legacyHeaders: false,
+  message: { error: "No se pudo completar la solicitud. Intenta nuevamente en unos minutos" }
+});
+const publicCaseLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 8, standardHeaders: true, legacyHeaders: false,
+  message: { error: "No se pudo completar la solicitud. Intenta nuevamente en unos minutos" }
+});
+const publicActionLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false,
+  message: { error: "No se pudo completar la solicitud. Intenta nuevamente en unos minutos" }
+});
+const publicReceiptLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false,
+  message: { error: "No se pudo completar la solicitud. Intenta nuevamente en unos minutos" }
+});
+const enterpriseInquiryLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false,
+  message: { error: "No se pudo completar la solicitud. Intenta nuevamente en unos minutos" }
+});
+const adminActionTokenLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false,
+  message: { error: "No se pudo completar la solicitud. Intenta nuevamente en unos minutos" }
+});
+const importLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false,
+  message: { error: "Demasiadas importaciones. Intenta nuevamente en unos minutos" }
+});
+const authenticatedUploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false,
+  message: { error: "Demasiadas cargas de archivos. Intenta nuevamente en unos minutos" }
 });
 
 app.use(cors({
@@ -241,56 +299,84 @@ let db = null;
 let server = null;
 let shuttingDown = false;
 
-if (CAN_SEND_AUTOMATIC_EMAIL) {
-  sgMail.setApiKey(SENDGRID_API_KEY);
-}
-
 if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
 const upload = multer({
   dest: UPLOADS_DIR,
-  limits: { fileSize: 25 * 1024 * 1024, files: 5 },
+  limits: { fileSize: CASE_ATTACHMENT_MAX_FILE_BYTES, files: CASE_ATTACHMENT_MAX_FILES, fields: 20, parts: 25 },
   fileFilter: (_req, file, cb) => {
-    const allowed = [
-      "application/pdf",
-      "image/png",
-      "image/jpeg",
-      "application/msword",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "text/plain"
-    ];
-    if (allowed.includes(file.mimetype)) return cb(null, true);
-    return cb(new multer.MulterError("LIMIT_UNEXPECTED_FILE", file.fieldname));
+    const allowedByExtension = new Map([
+      [".pdf", new Set(["application/pdf"])],
+      [".png", new Set(["image/png"])],
+      [".jpg", new Set(["image/jpeg"])],
+      [".jpeg", new Set(["image/jpeg"])],
+      [".doc", new Set(["application/msword"])],
+      [".docx", new Set(["application/vnd.openxmlformats-officedocument.wordprocessingml.document"])],
+      [".txt", new Set(["text/plain"]) ]
+    ]);
+    const ext = path.extname(String(file.originalname || "")).toLowerCase();
+    const allowedMime = allowedByExtension.get(ext);
+    if (allowedMime?.has(String(file.mimetype || "").toLowerCase())) return cb(null, true);
+    const error = new Error("Unsupported public case attachment type");
+    error.code = "UNSUPPORTED_FILE_TYPE";
+    error.fileName = file.originalname;
+    error.field = file.fieldname;
+    return cb(error);
   }
 });
 
 const importUpload = multer({
   dest: UPLOADS_DIR,
-  limits: { fileSize: 25 * 1024 * 1024, files: 20 },
+  limits: { fileSize: IMPORT_MAX_FILE_BYTES, files: IMPORT_MAX_FILES, fields: 10, parts: 15 },
   fileFilter: (_req, file, cb) => {
     const allowedMime = [
       "text/csv",
       "application/csv",
       "application/vnd.ms-excel",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "application/vnd.oasis.opendocument.spreadsheet",
       "text/plain",
       "application/octet-stream"
     ];
     const ext = path.extname(String(file.originalname || "")).toLowerCase();
-    const allowedExt = [".csv", ".xlsx", ".xls", ".ods"];
-    if (allowedMime.includes(file.mimetype) || allowedExt.includes(ext)) return cb(null, true);
+    const allowedExt = [".csv", ".xlsx"];
+    if (allowedMime.includes(file.mimetype) && allowedExt.includes(ext)) return cb(null, true);
     return cb(new multer.MulterError("LIMIT_UNEXPECTED_FILE", file.fieldname));
   }
 });
 
 function maybeUpload(req, res, next) {
-  if (req.is("multipart/form-data")) {
-    return upload.array("adjuntos", 5)(req, res, next);
-  }
-  return next();
+  if (!req.is("multipart/form-data")) return next();
+  return upload.array("adjuntos", CASE_ATTACHMENT_MAX_FILES)(req, res, (err) => {
+    if (err) return next(err);
+    const files = req.files || [];
+    const validationError = validateUploadedFiles(files);
+    if (validationError) {
+      files.forEach(deleteUploadedFile);
+      req.files = [];
+      return res.status(400).json({ error: validationError });
+    }
+    return next();
+  });
+}
+
+function publicCaseUpload(req, res, next) {
+  if (!req.is("multipart/form-data")) return next();
+
+  return upload.array("adjuntos", CASE_ATTACHMENT_MAX_FILES)(req, res, (err) => {
+    if (err) return next(err);
+
+    const files = req.files || [];
+    const validationError = validateUploadedFiles(files);
+    if (validationError) {
+      files.forEach(deleteUploadedFile);
+      req.files = [];
+      return res.status(validationError.includes("total de archivos") ? 413 : 400).json({ error: validationError });
+    }
+
+    return next();
+  });
 }
 
 function persistDb() {
@@ -495,6 +581,21 @@ function initDb() {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
     );
+    CREATE TABLE IF NOT EXISTS public_case_action_tokens (
+      id TEXT PRIMARY KEY,
+      case_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      revoked_at TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(case_id) REFERENCES cases(id) ON DELETE CASCADE,
+      FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_public_case_action_tokens_case_action
+      ON public_case_action_tokens(case_id, action, expires_at);
     CREATE INDEX IF NOT EXISTS idx_security_events_created_at ON security_events(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_security_events_type ON security_events(event_type);
     CREATE INDEX IF NOT EXISTS idx_security_events_user_id ON security_events(user_id);
@@ -517,6 +618,10 @@ function initDb() {
   addColumn("medios_pago", "TEXT");
   addColumn("relato", "TEXT");
   addColumn("autorizacion", "INTEGER");
+  addColumn("terms_accepted", "INTEGER DEFAULT 0");
+  addColumn("privacy_accepted", "INTEGER DEFAULT 0");
+  addColumn("consent_version", "TEXT");
+  addColumn("consent_accepted_at", "TEXT");
   addColumn("adjuntos", "TEXT");
   addColumn("plan_elegido", "TEXT");
   addColumn("case_code", "TEXT");
@@ -532,10 +637,23 @@ function initDb() {
   addColumn("payment_receipt_filename", "TEXT");
   addColumn("payment_receipt_original_name", "TEXT");
   addColumn("payment_receipt_uploaded_at", "TEXT");
+  addColumn("service_code", "TEXT");
+  addColumn("quoted_amount", "INTEGER");
+  addColumn("quoted_currency", "TEXT DEFAULT 'ARS'");
+  addColumn("quoted_scope", "TEXT");
+  addColumn("commercial_status", "TEXT");
+  addColumn("quoted_at", "TEXT");
+  addColumn("proposal_accepted_at", "TEXT");
+  addColumn("payment_confirmed_at", "TEXT");
   const updatesColumns = all("PRAGMA table_info(case_updates)").map((c) => c.name);
   if (!updatesColumns.includes("prioridad")) {
     db.exec("ALTER TABLE case_updates ADD COLUMN prioridad TEXT;");
   }
+  if (!updatesColumns.includes("visibility")) {
+    db.exec("ALTER TABLE case_updates ADD COLUMN visibility TEXT DEFAULT 'public';");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_cases_enterprise_user_id ON cases(enterprise_user_id);");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_cases_case_code ON cases(case_code);");
   const userColumns = all("PRAGMA table_info(users)").map((c) => c.name);
   const addUserColumn = (name, type) => {
     if (!userColumns.includes(name)) {
@@ -543,8 +661,15 @@ function initDb() {
     }
   };
   addUserColumn("email_verified", "INTEGER DEFAULT 0");
-  addUserColumn("verification_token", "TEXT");
-  addUserColumn("verification_sent_at", "TEXT");
+  const enterpriseInquiryColumns = all("PRAGMA table_info(enterprise_inquiries)").map((c) => c.name);
+  const addEnterpriseInquiryColumn = (name, type) => {
+    if (!enterpriseInquiryColumns.includes(name)) {
+      db.exec(`ALTER TABLE enterprise_inquiries ADD COLUMN ${name} ${type};`);
+    }
+  };
+  addEnterpriseInquiryColumn("privacy_accepted", "INTEGER DEFAULT 0");
+  addEnterpriseInquiryColumn("consent_version", "TEXT");
+  addEnterpriseInquiryColumn("consent_accepted_at", "TEXT");
   const enterpriseRetentionColumns = all("PRAGMA table_info(enterprise_retention_settings)").map((c) => c.name);
   if (!enterpriseRetentionColumns.includes("updated_at")) {
     db.exec("ALTER TABLE enterprise_retention_settings ADD COLUMN updated_at TEXT;");
@@ -578,6 +703,10 @@ function isNonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function isAccepted(value) {
+  return value === true || String(value || "").trim().toLowerCase() === "true";
+}
+
 function isValidEmail(value) {
   if (!isNonEmptyString(value)) return false;
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
@@ -600,11 +729,11 @@ function generateEnterprisePassword() {
   const numbers = "23456789";
   const symbols = "!@#$%*-_";
   const all = upper + lower + numbers + symbols;
-  const pick = (chars) => chars[Math.floor(Math.random() * chars.length)];
+  const pick = (chars) => chars[randomInt(chars.length)];
   const chars = [pick(upper), pick(lower), pick(numbers), pick(symbols)];
   while (chars.length < 14) chars.push(pick(all));
   for (let i = chars.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = randomInt(i + 1);
     [chars[i], chars[j]] = [chars[j], chars[i]];
   }
   return chars.join("");
@@ -681,6 +810,110 @@ function parseAttachmentFilenames(adjuntosValue) {
   } catch {
     return [];
   }
+}
+
+function deleteUploadedFile(file) {
+  const filename = path.basename(String(file?.filename || "").trim());
+  if (!filename) return;
+  const filePath = path.join(UPLOADS_DIR, filename);
+  if (fs.existsSync(filePath)) {
+    try {
+      fs.unlinkSync(filePath);
+    } catch (err) {
+      console.error("UPLOAD CLEANUP ERR:", filename, err.message);
+    }
+  }
+}
+
+function readFilePart(filePath, position, length) {
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const buffer = Buffer.alloc(length);
+    const bytesRead = fs.readSync(fd, buffer, 0, length, position);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function inspectZipEntries(filePath) {
+  const fileSize = fs.statSync(filePath).size;
+  const tailSize = Math.min(fileSize, 65557);
+  const tail = readFilePart(filePath, fileSize - tailSize, tailSize);
+  let eocd = -1;
+  for (let i = tail.length - 22; i >= Math.max(0, tail.length - 65557); i -= 1) {
+    if (tail.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0 || eocd + 22 > tail.length) return null;
+  if (tail.readUInt16LE(eocd + 4) !== 0 || tail.readUInt16LE(eocd + 6) !== 0) return null;
+  const entries = tail.readUInt16LE(eocd + 10);
+  const directorySize = tail.readUInt32LE(eocd + 12);
+  const directoryOffset = tail.readUInt32LE(eocd + 16);
+  if (!entries || entries > 10000 || directorySize > 2 * 1024 * 1024 || directoryOffset + directorySize > fileSize) return null;
+
+  const directory = readFilePart(filePath, directoryOffset, directorySize);
+  const names = new Set();
+  let offset = 0;
+  let uncompressedTotal = 0;
+  for (let i = 0; i < entries; i += 1) {
+    if (offset + 46 > directory.length || directory.readUInt32LE(offset) !== 0x02014b50) return null;
+    const flags = directory.readUInt16LE(offset + 8);
+    const compressedSize = directory.readUInt32LE(offset + 20);
+    const uncompressedSize = directory.readUInt32LE(offset + 24);
+    const nameLength = directory.readUInt16LE(offset + 28);
+    const extraLength = directory.readUInt16LE(offset + 30);
+    const commentLength = directory.readUInt16LE(offset + 32);
+    const nextOffset = offset + 46 + nameLength + extraLength + commentLength;
+    if ((flags & 1) !== 0 || nextOffset > directory.length) return null;
+    if (compressedSize === 0xffffffff || uncompressedSize === 0xffffffff) return null;
+    if (uncompressedSize > 100 * 1024 * 1024) return null;
+    if (compressedSize === 0 ? uncompressedSize > 0 : uncompressedSize / compressedSize > 200) return null;
+    uncompressedTotal += uncompressedSize;
+    if (uncompressedTotal > 64 * 1024 * 1024) return null;
+    names.add(directory.toString("utf8", offset + 46, offset + 46 + nameLength));
+    offset = nextOffset;
+  }
+  return names;
+}
+
+function validateTextFile(filePath) {
+  const sample = readFilePart(filePath, 0, Math.min(fs.statSync(filePath).size, 8192));
+  if (sample.includes(0)) return false;
+  let controls = 0;
+  for (const byte of sample) {
+    if ((byte < 0x20 && ![0x09, 0x0a, 0x0d].includes(byte)) || byte === 0x7f) controls += 1;
+  }
+  return sample.length === 0 || controls / sample.length <= 0.01;
+}
+
+function validateUploadedFileContent(file, { importFile = false } = {}) {
+  const ext = path.extname(String(file?.originalname || "")).toLowerCase();
+  const filePath = file?.path;
+  if (!filePath || !fs.existsSync(filePath)) return false;
+  if (ext === ".pdf") return readFilePart(filePath, 0, Math.min(1024, fs.statSync(filePath).size)).includes(Buffer.from("%PDF-"));
+  if (ext === ".png") return readFilePart(filePath, 0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  if (ext === ".jpg" || ext === ".jpeg") return readFilePart(filePath, 0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]));
+  if (ext === ".doc") return readFilePart(filePath, 0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]));
+  if (ext === ".docx") {
+    const entries = inspectZipEntries(filePath);
+    return Boolean(entries?.has("[Content_Types].xml") && entries.has("word/document.xml"));
+  }
+  if (ext === ".xlsx") return Boolean(inspectZipEntries(filePath)?.has("xl/workbook.xml"));
+  if (ext === ".txt" || (importFile && ext === ".csv")) return validateTextFile(filePath);
+  return false;
+}
+
+function validateUploadedFiles(files, { totalLimit = PUBLIC_CASE_ATTACHMENT_MAX_TOTAL_BYTES, importFile = false } = {}) {
+  const uploaded = Array.isArray(files) ? files : [];
+  const totalBytes = uploaded.reduce((sum, file) => sum + (Number(file?.size) || 0), 0);
+  if (totalBytes > totalLimit) return "El total de archivos supera el límite permitido.";
+  for (const file of uploaded) {
+    if (!validateUploadedFileContent(file, { importFile })) {
+      const displayName = cleanText(path.basename(String(file.originalname || "archivo")), 120);
+      return `El contenido del archivo ${displayName || "seleccionado"} no coincide con su formato.`;
+    }
+  }
+  return "";
 }
 
 function deleteCaseAttachments(rows = []) {
@@ -762,10 +995,6 @@ const loginSchema = z.object({
   account_type: z.string().trim().optional()
 });
 
-const resendVerificationSchema = z.object({
-  email: z.string().trim().email()
-});
-
 const enterpriseInquirySchema = z.object({
   empresa: z.string().trim().min(2).max(120),
   rubro: z.string().trim().min(2).max(120),
@@ -775,7 +1004,8 @@ const enterpriseInquirySchema = z.object({
   servicios: z.union([z.string(), z.array(z.string()), z.null(), z.undefined()]),
   descripcion: z.string().trim().min(5).max(4000),
   volumen: z.string().trim().min(1).max(60),
-  comentarios: z.union([z.string().trim().max(2000), z.null(), z.undefined()])
+  comentarios: z.union([z.string().trim().max(2000), z.null(), z.undefined()]),
+  acepta_privacidad: z.union([z.boolean(), z.string()])
 });
 
 
@@ -788,6 +1018,10 @@ const publicCaseLookupSchema = z.object({
   case_id: z.string().trim().min(6).max(80),
   identifier: z.string().trim().min(3).max(180)
 });
+
+const publicProposalAcceptSchema = publicCaseLookupSchema.extend({ action_token: z.string().min(64).max(128) });
+const publicPaymentReceiptSchema = publicCaseLookupSchema.extend({ action_token: z.string().min(64).max(128) });
+const publicActionTokenIssueSchema = z.object({ action: z.enum(["proposal_accept", "payment_receipt"]) });
 
 const caseCreateSchema = z.object({
   categoria: z.union([z.string().trim().max(120), z.null(), z.undefined()]),
@@ -803,18 +1037,41 @@ const caseCreateSchema = z.object({
   medios_pago: z.any().optional(),
   relato: z.union([z.string().trim().max(4000), z.null(), z.undefined()]),
   autorizacion: z.union([z.boolean(), z.string(), z.null(), z.undefined()]),
+  acepta_terminos: z.union([z.boolean(), z.string(), z.null(), z.undefined()]),
+  acepta_privacidad: z.union([z.boolean(), z.string(), z.null(), z.undefined()]),
   plan_elegido: z.union([z.string().trim().max(120), z.null(), z.undefined()]),
   detalle: z.union([z.string().trim().max(4000), z.null(), z.undefined()])
 });
 
 const publicCaseCreateSchema = caseCreateSchema.superRefine((data, ctx) => {
-  const hasEmail = isNonEmptyString(data?.email_contacto);
-  const hasDni = isNonEmptyString(data?.dni_cuit);
-  if (!hasEmail && !hasDni) {
+  const requiredFields = [
+    ["nombre_completo", "Debes indicar tu nombre completo"],
+    ["email_contacto", "Debes indicar un correo electrónico válido"],
+    ["entidad", "Debes indicar la empresa o proveedor reclamado"],
+    ["categoria", "Debes seleccionar una categoría"],
+    ["relato", "Debes describir el reclamo"]
+  ];
+  requiredFields.forEach(([field, message]) => {
+    if (!isNonEmptyString(data?.[field])) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [field],
+        message
+      });
+    }
+  });
+  if (!isAccepted(data?.acepta_terminos)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      path: ["email_contacto"],
-      message: "Debes indicar email o DNI/CUIT"
+      path: ["acepta_terminos"],
+      message: "Debes aceptar los Términos y Condiciones"
+    });
+  }
+  if (!isAccepted(data?.acepta_privacidad)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["acepta_privacidad"],
+      message: "Debes aceptar la Política de Privacidad"
     });
   }
 });
@@ -822,6 +1079,13 @@ const publicCaseCreateSchema = caseCreateSchema.superRefine((data, ctx) => {
 const caseUpdateSchema = z.object({
   mensaje: z.union([z.string().trim().max(3000), z.null(), z.undefined()]),
   estado: z.union([z.string().trim().max(120), z.null(), z.undefined()]),
+  plan_elegido: z.union([z.string().trim().max(120), z.null(), z.undefined()]),
+  service_code: z.union([z.string().trim().max(80), z.null(), z.undefined()]),
+  quoted_amount: z.union([z.number(), z.string().trim().max(30), z.null(), z.undefined()]),
+  quoted_currency: z.union([z.string().trim().max(8), z.null(), z.undefined()]),
+  quoted_scope: z.union([z.string().trim().max(4000), z.null(), z.undefined()]),
+  commercial_status: z.union([z.string().trim().max(40), z.null(), z.undefined()]),
+  message_visibility: z.union([z.enum(["public", "rfa_internal"]), z.null(), z.undefined()]),
   prioridad: z.union([z.string().trim().max(20), z.null(), z.undefined()]),
   riesgo: z.union([z.string().trim().max(20), z.null(), z.undefined()]),
   documentacion_estado: z.union([z.string().trim().max(40), z.null(), z.undefined()]),
@@ -842,7 +1106,9 @@ function findPublicCaseByLookup(caseIdRaw, identifierRaw) {
 
   const caso = get(
     `SELECT
-      c.id, c.case_code, c.estado, c.categoria, c.entidad, c.plan_elegido, c.created_at, c.updated_at,
+      c.id, c.case_code, c.estado, c.categoria, c.entidad, c.plan_elegido, c.service_code,
+      c.quoted_amount, c.quoted_currency, c.quoted_scope, c.commercial_status,
+      c.quoted_at, c.proposal_accepted_at, c.payment_confirmed_at, c.created_at, c.updated_at,
       c.dni_cuit, c.email_contacto, c.payment_receipt_uploaded_at, c.payment_receipt_filename,
       COALESCE(c.email_contacto, u.email) AS owner_email
      FROM cases c
@@ -856,11 +1122,63 @@ function findPublicCaseByLookup(caseIdRaw, identifierRaw) {
   const normalizedIdentifier = identifier.toLowerCase();
   const ownerEmail = String(caso.owner_email || "").trim().toLowerCase();
   const ownerDni = String(caso.dni_cuit || "").trim();
+  const hasContactEmail = String(caso.email_contacto || "").trim().length > 0;
   const emailMatches = ownerEmail && ownerEmail === normalizedIdentifier;
-  const dniMatches = ownerDni && ownerDni === identifier;
+  const dniMatches = !hasContactEmail && ownerDni && ownerDni === identifier;
   if (!emailMatches && !dniMatches) return null;
 
   return caso;
+}
+
+function normalizeQuotedAmount(value) {
+  if (value === undefined) return { provided: false, value: undefined };
+  if (value === null || String(value).trim() === "") return { provided: true, value: null };
+  const normalized = typeof value === "number"
+    ? value
+    : Number(String(value).replace(/[$.\s]/g, "").replace(",", "."));
+  if (!Number.isSafeInteger(normalized) || normalized < 1 || normalized > 1_000_000_000_000) {
+    return { provided: true, error: "El precio debe ser un importe entero positivo en ARS" };
+  }
+  return { provided: true, value: normalized };
+}
+
+function getStoredServiceCode(caso) {
+  return cleanText(caso?.service_code, 80) || cleanText(caso?.plan_elegido, 120) || null;
+}
+
+function getEffectiveCommercialStatus(caso) {
+  const explicit = cleanText(caso?.commercial_status, 40);
+  if (explicit && COMMERCIAL_STATUSES.has(explicit)) return explicit;
+  const legacyStatus = normalizeCompareText(caso?.estado);
+  const legacyService = normalizeCompareText(caso?.plan_elegido);
+  const legacyPaidService = legacyService && legacyService !== "analysis" && legacyService !== "analisis inicial";
+  if (legacyPaidService && legacyStatus === "viable (pendiente de pago)") return "payment_pending";
+  return "analysis";
+}
+
+function hasVisibleProposal(caso) {
+  return ["proposal_sent", "accepted", "payment_pending", "paid"].includes(getEffectiveCommercialStatus(caso));
+}
+
+function sanitizeCaseForRole(caso, role) {
+  if (!caso || role === "admin") return caso;
+  const sanitized = { ...caso };
+  delete sanitized.observaciones_rfa;
+  if (role === "enterprise") {
+    delete sanitized.plan_elegido;
+    delete sanitized.service_code;
+    delete sanitized.quoted_amount;
+    delete sanitized.quoted_currency;
+    delete sanitized.quoted_scope;
+    delete sanitized.commercial_status;
+    delete sanitized.quoted_at;
+    delete sanitized.proposal_accepted_at;
+    delete sanitized.payment_confirmed_at;
+    delete sanitized.payment_receipt_filename;
+    delete sanitized.payment_receipt_original_name;
+    delete sanitized.payment_receipt_uploaded_at;
+  }
+  return sanitized;
 }
 
 function validateBody(schema, payload) {
@@ -875,6 +1193,41 @@ function validateBody(schema, payload) {
 
 function hashRefreshToken(token) {
   return createHash("sha256").update(token).digest("hex");
+}
+
+function hashPublicActionToken(token) {
+  return createHash("sha256").update(String(token || "")).digest("hex");
+}
+
+function getActivePublicActionToken(token, caseId, action) {
+  if (typeof token !== "string" || !/^[a-f0-9]{64}$/i.test(token)) return null;
+  return get(
+    `SELECT id FROM public_case_action_tokens
+     WHERE case_id = ? AND action = ? AND token_hash = ?
+       AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?`,
+    [caseId, action, hashPublicActionToken(token), new Date().toISOString()]
+  );
+}
+
+function runInTransaction(callback) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = callback();
+    db.exec("COMMIT");
+    schedulePersistDb();
+    return result;
+  } catch (error) {
+    try { db.exec("ROLLBACK"); } catch { /* keep the original error */ }
+    throw error;
+  }
+}
+
+function runAndCount(sql, params = []) {
+  const stmt = db.prepare(sql);
+  stmt.run(params);
+  const changed = db.getRowsModified();
+  stmt.free();
+  return changed;
 }
 
 function getRefreshCookieOptions() {
@@ -1057,21 +1410,23 @@ function parseCsvLine(line, delimiter = ",") {
   return out.map((v) => String(v || "").trim());
 }
 
-function parseCsvText(csvText) {
+function parseCsvText(csvText, maxRows = IMPORT_MAX_ROWS) {
   const lines = String(csvText || "")
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
   if (lines.length < 2) return [];
+  if (lines.length - 1 > maxRows) throw new Error("IMPORT_ROW_LIMIT");
   const headerLine = lines[0];
   const commaCount = (headerLine.match(/,/g) || []).length;
   const semicolonCount = (headerLine.match(/;/g) || []).length;
   const delimiter = semicolonCount > commaCount ? ";" : ",";
   const headers = parseCsvLine(headerLine, delimiter).map(normalizeHeader);
+  if (headers.length > IMPORT_MAX_COLUMNS) throw new Error("IMPORT_COLUMN_LIMIT");
   const rows = [];
   for (let i = 1; i < lines.length; i += 1) {
     const cols = parseCsvLine(lines[i], delimiter);
-    const row = {};
+    const row = Object.create(null);
     headers.forEach((header, idx) => {
       row[header] = cols[idx] ?? "";
     });
@@ -1081,35 +1436,53 @@ function parseCsvText(csvText) {
 }
 
 function parseSpreadsheetFile(filePath) {
-  const workbook = XLSX.readFile(filePath, { cellDates: false, raw: false });
-  if (!workbook?.SheetNames?.length) return [];
-  const firstSheetName = workbook.SheetNames[0];
-  const sheet = workbook.Sheets[firstSheetName];
-  if (!sheet) return [];
-  const rows = XLSX.utils.sheet_to_json(sheet, { defval: "", raw: false });
-  return rows.map((row) => {
-    const normalized = {};
-    Object.keys(row || {}).forEach((key) => {
-      normalized[normalizeHeader(key)] = String(row[key] ?? "").trim();
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL("./import-spreadsheet-worker.js", import.meta.url), {
+      workerData: { filePath, maxRows: IMPORT_MAX_ROWS, maxColumns: IMPORT_MAX_COLUMNS },
+      resourceLimits: { maxOldGenerationSizeMb: 128, maxYoungGenerationSizeMb: 32 }
     });
-    return normalized;
+    const timeout = setTimeout(() => {
+      worker.terminate();
+      reject(new Error("IMPORT_PARSE_TIMEOUT"));
+    }, 8000);
+    worker.once("message", (result) => {
+      clearTimeout(timeout);
+      if (result?.error) return reject(new Error(result.error));
+      const rows = Array.isArray(result?.rows) ? result.rows : [];
+      resolve(rows.map((row) => {
+        const normalized = Object.create(null);
+        Object.keys(row || {}).forEach((key) => {
+          normalized[normalizeHeader(key)] = String(row[key] ?? "").trim();
+        });
+        return normalized;
+      }));
+    });
+    worker.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    worker.once("exit", (code) => {
+      clearTimeout(timeout);
+      if (code !== 0) reject(new Error("IMPORT_WORKER_FAILED"));
+    });
   });
 }
 
-function parseImportFileRows(file) {
+async function parseImportFileRows(file) {
   const ext = path.extname(String(file?.originalname || file?.path || "")).toLowerCase();
-  if (ext === ".xlsx" || ext === ".xls" || ext === ".ods") {
+  if (ext === ".xlsx") {
     return parseSpreadsheetFile(file.path);
   }
+  if (ext !== ".csv") throw new Error("IMPORT_FILE_INVALID");
   const csvText = fs.readFileSync(file.path, "utf8");
-  return parseCsvText(csvText);
+  return parseCsvText(csvText, IMPORT_MAX_ROWS);
 }
 
 function randomCaseSuffix(length = 6) {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let out = "";
   for (let i = 0; i < length; i += 1) {
-    out += chars[Math.floor(Math.random() * chars.length)];
+    out += chars[randomInt(chars.length)];
   }
   return out;
 }
@@ -1162,13 +1535,15 @@ function ensureAdminAccounts() {
   ADMIN_EMAILS.forEach((email) => {
     const existing = get("SELECT id, role FROM users WHERE email = ?", [email]);
     if (existing?.id) {
-      if (passwordHash) {
+      if (existing.role !== "admin" && passwordHash) {
         run(
           "UPDATE users SET role = 'admin', password_hash = ?, email_verified = 1 WHERE id = ?",
           [passwordHash, existing.id]
         );
       } else if (existing.role !== "admin") {
         run("UPDATE users SET role = 'admin', email_verified = 1 WHERE id = ?", [existing.id]);
+      } else {
+        run("UPDATE users SET email_verified = 1 WHERE id = ?", [existing.id]);
       }
       return;
     }
@@ -1191,62 +1566,6 @@ function canAccessCase(user, caso) {
   if (user.role === "admin") return true;
   if (user.role === "enterprise") return caso.enterprise_user_id === user.sub;
   return caso.user_id === user.sub;
-}
-
-function getSendgridErrorDetail(err) {
-  const code = err?.code || err?.response?.statusCode || "UNKNOWN";
-  const body = err?.response?.body;
-  const errors = Array.isArray(body?.errors) ? body.errors.map((e) => e?.message).filter(Boolean) : [];
-  const message = errors[0] || err?.message || "Fallo de envio";
-  return { code, message };
-}
-
-async function sendStatusEmail({ to, status, message, caseId }) {
-  if (!CAN_SEND_AUTOMATIC_EMAIL || !isValidEmail(to)) return;
-  const subject = `Actualizacion de tu reclamo: ${status}`;
-  const text = [
-    `Estado actual: ${status}`,
-    message ? `Mensaje: ${message}` : null,
-    caseId ? `ID de caso: ${caseId}` : null,
-    "RFA - Reclamos Financieros Argentina"
-  ]
-    .filter(Boolean)
-    .join("\n");
-  try {
-    await sgMail.send({
-      to,
-      from: EMAIL_FROM,
-      subject,
-      text
-    });
-  } catch (err) {
-    console.error("EMAIL ERR:", err.message);
-  }
-}
-
-async function sendVerificationEmail({ to, token }) {
-  if (!CAN_SEND_AUTOMATIC_EMAIL || !isValidEmail(to) || !token) return;
-  const verifyUrl = `${APP_BASE_URL}/verificar?token=${encodeURIComponent(token)}`;
-  const subject = "Verifica tu email en RFA";
-  const text = [
-    "Necesitamos verificar tu email para activar tu cuenta.",
-    `Verifica aqui: ${verifyUrl}`,
-    "Si no solicitaste este registro, ignora este mensaje."
-  ].join("\n");
-  try {
-    await sgMail.send({
-      to,
-      from: EMAIL_FROM,
-      subject,
-      text
-    });
-  } catch (err) {
-    const detail = getSendgridErrorDetail(err);
-    console.error("EMAIL VERIFY ERR:", detail.code, detail.message);
-    const wrapped = new Error(detail.message);
-    wrapped.code = "EMAIL_SEND_FAILED";
-    throw wrapped;
-  }
 }
 
 function logSecurityEvent(req, {
@@ -1313,10 +1632,6 @@ app.get("/health", (_req, res) => {
   res.status(200).send("OK");
 });
 
-app.get("/api/auth/config", (_req, res) => {
-  res.json({ emailVerificationEnabled: EMAIL_VERIFICATION_ENABLED });
-});
-
 // ---- Noticias RSS (cache 30 min) ----
 const FEEDS = [
   "https://news.google.com/rss/search?q=site:ambito.com+OR+site:iprofesional.com+reclamos+financieros&hl=es-419&gl=AR&ceid=AR:es-419",
@@ -1366,7 +1681,7 @@ app.get("/api/noticias", handleNoticias);
 app.get("/api/news", handleNoticias);
 
 // -------------------- EMPRESAS --------------------
-app.post("/api/enterprise", publicFormLimiter, async (req, res) => {
+app.post("/api/enterprise", enterpriseInquiryLimiter, async (req, res) => {
   try {
     const validated = validateBody(enterpriseInquirySchema, req.body);
     if (!validated.ok) {
@@ -1381,8 +1696,13 @@ app.post("/api/enterprise", publicFormLimiter, async (req, res) => {
       servicios,
       descripcion,
       volumen,
-      comentarios
+      comentarios,
+      acepta_privacidad
     } = validated.data;
+
+    if (!isAccepted(acepta_privacidad)) {
+      return res.status(400).json({ error: "Debes aceptar la Política de Privacidad" });
+    }
 
     const inquiryId = randomUUID();
     const empresaClean = cleanText(empresa, 120);
@@ -1395,8 +1715,9 @@ app.post("/api/enterprise", publicFormLimiter, async (req, res) => {
     const comentariosClean = cleanText(comentarios, 2000);
     run(
       `INSERT INTO enterprise_inquiries (
-        id, empresa, rubro, contacto, email, telefono, servicios, descripcion, volumen, comentarios
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        id, empresa, rubro, contacto, email, telefono, servicios, descripcion, volumen, comentarios,
+        privacy_accepted, consent_version, consent_accepted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         inquiryId,
         empresaClean,
@@ -1407,7 +1728,10 @@ app.post("/api/enterprise", publicFormLimiter, async (req, res) => {
         typeof servicios === "string" ? servicios : JSON.stringify(servicios || []),
         descripcionClean,
         volumenClean,
-        comentariosClean
+        comentariosClean,
+        1,
+        POLICY_CONSENT_VERSION,
+        new Date().toISOString()
       ]
     );
     const created = get("SELECT * FROM enterprise_inquiries WHERE id = ?", [inquiryId]);
@@ -1417,10 +1741,13 @@ app.post("/api/enterprise", publicFormLimiter, async (req, res) => {
   }
 });
 
-app.post("/api/public/cases", publicFormLimiter, maybeUpload, async (req, res) => {
+app.post("/api/public/cases", publicCaseLimiter, publicCaseUpload, async (req, res) => {
+  const uploadedFiles = req.files || [];
+  let caseCreated = false;
   try {
     const validated = validateBody(publicCaseCreateSchema, req.body);
     if (!validated.ok) {
+      uploadedFiles.forEach(deleteUploadedFile);
       return res.status(400).json({ error: validated.error });
     }
 
@@ -1439,22 +1766,25 @@ app.post("/api/public/cases", publicFormLimiter, maybeUpload, async (req, res) =
       medios_pago,
       relato,
       autorizacion,
-      plan_elegido,
+      acepta_terminos,
+      acepta_privacidad,
       detalle
     } = body;
 
     const detalleValue = cleanText(relato || detalle, 4000);
     if (!detalleValue) {
+      uploadedFiles.forEach(deleteUploadedFile);
       return res.status(400).json({ error: "La descripcion del caso es obligatoria" });
     }
 
     const emailContactoClean = cleanText(email_contacto === "" ? null : email_contacto, 180)?.toLowerCase();
     const dniCuitClean = cleanText(dni_cuit, 40);
-    if (!emailContactoClean && !dniCuitClean) {
-      return res.status(400).json({ error: "Debes indicar email o DNI/CUIT" });
+    if (!emailContactoClean) {
+      uploadedFiles.forEach(deleteUploadedFile);
+      return res.status(400).json({ error: "Debes indicar un correo electrónico válido" });
     }
 
-    const files = (req.files || []).map((file) => ({
+    const files = uploadedFiles.map((file) => ({
       originalName: file.originalname,
       filename: file.filename,
       size: file.size,
@@ -1463,7 +1793,7 @@ app.post("/api/public/cases", publicFormLimiter, maybeUpload, async (req, res) =
 
     const caseId = randomUUID();
     const caseCode = generatePublicCaseCode();
-    const estadoInicial = "Recibido";
+    const estadoInicial = "received";
     const intakeUserId = getOrCreatePublicIntakeUserId();
 
     const insertValues = [
@@ -1484,8 +1814,15 @@ app.post("/api/public/cases", publicFormLimiter, maybeUpload, async (req, res) =
       typeof medios_pago === "string" ? medios_pago : JSON.stringify(medios_pago || []),
       cleanText(relato, 4000),
       autorizacion === "true" || autorizacion === true ? 1 : 0,
+      isAccepted(acepta_terminos) ? 1 : 0,
+      isAccepted(acepta_privacidad) ? 1 : 0,
+      POLICY_CONSENT_VERSION,
+      new Date().toISOString(),
       files.length ? JSON.stringify(files) : null,
-      cleanText(plan_elegido, 120),
+      INITIAL_ANALYSIS_SERVICE_CODE,
+      INITIAL_ANALYSIS_SERVICE_CODE,
+      "analysis",
+      "ARS",
       caseCode,
       "Pendiente",
       "Pendiente"
@@ -1495,18 +1832,21 @@ app.post("/api/public/cases", publicFormLimiter, maybeUpload, async (req, res) =
       `INSERT INTO cases (
         id, user_id, categoria, detalle, estado, nombre_completo, dni_cuit, email_contacto, telefono,
         entidad, tipo_entidad, monto_valor, monto_escala, monto_moneda, medios_pago, relato,
-        autorizacion, adjuntos, plan_elegido, case_code, prioridad, riesgo
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        autorizacion, terms_accepted, privacy_accepted, consent_version, consent_accepted_at,
+        adjuntos, plan_elegido, service_code, commercial_status, quoted_currency, case_code, prioridad, riesgo
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       insertValues
     );
+    caseCreated = true;
 
-    run("INSERT INTO case_updates (id, case_id, author_id, mensaje, estado, prioridad) VALUES (?, ?, ?, ?, ?, ?)", [
+    run("INSERT INTO case_updates (id, case_id, author_id, mensaje, estado, prioridad, visibility) VALUES (?, ?, ?, ?, ?, ?, ?)", [
       randomUUID(),
       caseId,
       intakeUserId,
       "Caso cargado por formulario publico.",
       estadoInicial,
-      null
+      null,
+      "public"
     ]);
 
     return res.status(201).json({
@@ -1516,12 +1856,13 @@ app.post("/api/public/cases", publicFormLimiter, maybeUpload, async (req, res) =
       message: "Caso cargado correctamente. Guarda tu ID para seguimiento."
     });
   } catch (err) {
+    if (!caseCreated) uploadedFiles.forEach(deleteUploadedFile);
     console.error("PUBLIC CASE CREATE ERR:", req.requestId, err?.message || err);
     return res.status(500).json({ error: "Error al crear el caso" });
   }
 });
 
-app.post("/api/public/case-lookup", publicFormLimiter, async (req, res) => {
+app.post("/api/public/case-lookup", lookupLimiter, async (req, res) => {
   try {
     const validated = validateBody(publicCaseLookupSchema, req.body);
     if (!validated.ok) {
@@ -1542,23 +1883,39 @@ app.post("/api/public/case-lookup", publicFormLimiter, async (req, res) => {
 
     const updates = all(
       `
-      SELECT cu.*, u.email AS author_email
+      SELECT cu.id, cu.mensaje, cu.estado, cu.prioridad, cu.created_at
       FROM case_updates cu
-      LEFT JOIN users u ON u.id = cu.author_id
       WHERE cu.case_id = ?
+        AND COALESCE(cu.visibility, 'public') = 'public'
       ORDER BY cu.created_at DESC, cu.rowid DESC
       `,
       [caso.id]
     );
 
+    const proposalVisible = hasVisibleProposal(caso);
+    const commercialStatus = getEffectiveCommercialStatus(caso);
+
     return res.json({
       case: {
         id: caso.id,
         case_code: caso.case_code || caso.id,
-        estado: caso.estado || "Recibido",
+        estado: caso.estado || "received",
         categoria: caso.categoria || null,
         entidad: caso.entidad || null,
-        plan_elegido: caso.plan_elegido || null,
+        service_code: proposalVisible ? getStoredServiceCode(caso) : INITIAL_ANALYSIS_SERVICE_CODE,
+        commercial_status: commercialStatus,
+        proposal: proposalVisible
+          ? {
+              service_code: getStoredServiceCode(caso),
+              amount: Number(caso.quoted_amount) || null,
+              currency: caso.quoted_currency || "ARS",
+              scope: caso.quoted_scope || null,
+              status: commercialStatus,
+              quoted_at: caso.quoted_at || null,
+              accepted_at: caso.proposal_accepted_at || null,
+              payment_confirmed_at: caso.payment_confirmed_at || null
+            }
+          : null,
         payment_receipt_uploaded_at: caso.payment_receipt_uploaded_at || null,
         has_payment_receipt: Boolean(caso.payment_receipt_filename),
         email_contacto: caso.email_contacto || null,
@@ -1573,16 +1930,121 @@ app.post("/api/public/case-lookup", publicFormLimiter, async (req, res) => {
   }
 });
 
-app.post("/api/public/case-payment-receipt", publicFormLimiter, (req, res, next) => {
+app.post("/api/admin/cases/:id/public-action-token", authRequired, adminOnly, adminActionTokenLimiter, async (req, res) => {
+  try {
+    const validated = validateBody(publicActionTokenIssueSchema, req.body);
+    if (!validated.ok) return res.status(400).json({ error: "Solicitud invalida" });
+    const { action } = validated.data;
+    const caso = get("SELECT id, case_code, enterprise_user_id FROM cases WHERE id = ?", [req.params.id]);
+    if (!caso || caso.enterprise_user_id) return res.status(404).json({ error: "No se pudo generar la autorizacion" });
+
+    const current = get("SELECT * FROM cases WHERE id = ?", [caso.id]);
+    const expectedStatus = action === "proposal_accept" ? "proposal_sent" : "payment_pending";
+    if (getEffectiveCommercialStatus(current) !== expectedStatus) {
+      return res.status(409).json({ error: "La accion no esta disponible para este caso" });
+    }
+
+    const rawToken = randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + PUBLIC_ACTION_TOKEN_TTL_HOURS * 60 * 60 * 1000).toISOString();
+    const tokenId = randomUUID();
+    const actionName = action === "proposal_accept" ? "proposal_accept" : "payment_receipt";
+    const actionUrl = new URL("/consultar-caso", APP_BASE_URL);
+    actionUrl.hash = new URLSearchParams({
+      rfa_action: actionName,
+      rfa_token: rawToken,
+      rfa_case: caso.case_code || caso.id
+    }).toString();
+
+    runInTransaction(() => {
+      run("UPDATE public_case_action_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE case_id = ? AND action = ? AND used_at IS NULL AND revoked_at IS NULL", [caso.id, actionName]);
+      run(
+        `INSERT INTO public_case_action_tokens (id, case_id, action, token_hash, expires_at, created_by)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [tokenId, caso.id, actionName, hashPublicActionToken(rawToken), expiresAt, req.user.sub]
+      );
+    });
+    logSecurityEvent(req, { eventType: "public_case_action_token_issued", resourceType: "case", resourceId: caso.id, success: true, details: actionName });
+    return res.status(201).json({ action: actionName, url: actionUrl.toString(), expires_at: expiresAt });
+  } catch (err) {
+    console.error("PUBLIC ACTION TOKEN ISSUE ERR:", req.requestId, err.message);
+    return res.status(500).json({ error: "No se pudo generar la autorizacion" });
+  }
+});
+
+app.post("/api/public/case-proposal-accept", publicActionLimiter, async (req, res) => {
+  try {
+    const validated = validateBody(publicProposalAcceptSchema, req.body);
+    if (!validated.ok) return res.status(403).json({ error: "No se pudo autorizar la accion" });
+
+    const caso = findPublicCaseByLookup(validated.data.case_id, validated.data.identifier);
+    const tokenRow = caso
+      ? getActivePublicActionToken(validated.data.action_token, caso.id, "proposal_accept")
+      : null;
+    if (!caso || !tokenRow) {
+      return res.status(403).json({ error: "No se pudo autorizar la accion" });
+    }
+    if (caso.commercial_status !== "proposal_sent") {
+      return res.status(409).json({ error: "La propuesta no esta disponible para aceptar" });
+    }
+    if (!PAID_SERVICE_CODES.has(String(caso.service_code || "")) || !Number(caso.quoted_amount) || !caso.quoted_scope) {
+      return res.status(409).json({ error: "La propuesta esta incompleta" });
+    }
+
+    const accepted = runInTransaction(() => {
+      const active = getActivePublicActionToken(validated.data.action_token, caso.id, "proposal_accept");
+      if (!active || active.id !== tokenRow.id) return false;
+      if (!runAndCount(
+        `UPDATE cases SET commercial_status = 'accepted', proposal_accepted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND commercial_status = 'proposal_sent'`, [caso.id]
+      )) return false;
+      if (!runAndCount(
+        `UPDATE public_case_action_tokens SET used_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?`,
+        [tokenRow.id, new Date().toISOString()]
+      )) throw new Error("ACTION_TOKEN_CONSUME_FAILED");
+      run("INSERT INTO case_updates (id, case_id, author_id, mensaje, estado, prioridad, visibility) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [randomUUID(), caso.id, null, "Propuesta aceptada por el cliente.", null, null, "public"]);
+      return true;
+    });
+    if (!accepted) return res.status(403).json({ error: "No se pudo autorizar la accion" });
+    logSecurityEvent(req, {
+      eventType: "case_proposal_accept",
+      resourceType: "case",
+      resourceId: caso.id,
+      success: true
+    });
+    return res.json({
+      message: "Propuesta aceptada correctamente.",
+      commercial_status: "accepted",
+      accepted_at: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error("PUBLIC PROPOSAL ACCEPT ERR:", req.requestId, err.message);
+    return res.status(500).json({ error: "No se pudo registrar la aceptacion" });
+  }
+});
+
+app.post("/api/public/case-payment-receipt", publicReceiptLimiter, (req, res, next) => {
   upload.single("comprobante")(req, res, (err) => {
     if (err) return next(err);
+    if (req.file && !validateUploadedFileContent(req.file)) {
+      deleteUploadedFile(req.file);
+      req.file = null;
+      return res.status(400).json({ error: "El contenido del comprobante no coincide con su formato" });
+    }
     return next();
   });
 }, async (req, res) => {
   try {
-    const caseId = cleanText(req.body?.case_id, 80);
-    const identifier = cleanText(req.body?.identifier, 180);
+    const validated = validateBody(publicPaymentReceiptSchema, req.body);
+    if (!validated.ok) {
+      deleteUploadedFile(req.file);
+      return res.status(400).json({ error: "Solicitud invalida" });
+    }
+    const caseId = cleanText(validated.data.case_id, 80);
+    const identifier = cleanText(validated.data.identifier, 180);
     if (!caseId || !identifier) {
+      deleteUploadedFile(req.file);
       return res.status(400).json({ error: "Debes indicar ID de caso e identificador" });
     }
     if (!req.file) {
@@ -1590,38 +2052,53 @@ app.post("/api/public/case-payment-receipt", publicFormLimiter, (req, res, next)
     }
 
     const caso = findPublicCaseByLookup(caseId, identifier);
-    if (!caso) {
-      return res.status(404).json({ error: "No se encontro un caso con esos datos" });
+    const tokenRow = caso
+      ? getActivePublicActionToken(validated.data.action_token, caso.id, "payment_receipt")
+      : null;
+    if (!caso || !tokenRow) {
+      deleteUploadedFile(req.file);
+      return res.status(403).json({ error: "No se pudo autorizar la accion" });
+    }
+    if (getEffectiveCommercialStatus(caso) !== "payment_pending") {
+      deleteUploadedFile(req.file);
+      return res.status(409).json({ error: "El caso no se encuentra pendiente de pago" });
     }
 
     const oldFilename = path.basename(String(caso.payment_receipt_filename || "").trim());
-    if (oldFilename) {
-      const oldPath = path.join(UPLOADS_DIR, oldFilename);
-      if (fs.existsSync(oldPath)) {
-        try {
-          fs.unlinkSync(oldPath);
-        } catch (err) {
-          console.error("PAYMENT RECEIPT REPLACE ERR:", oldFilename, err.message);
-        }
-      }
+    const saved = runInTransaction(() => {
+      const active = getActivePublicActionToken(validated.data.action_token, caso.id, "payment_receipt");
+      if (!active || active.id !== tokenRow.id) return false;
+      if (!runAndCount(
+        `UPDATE cases SET payment_receipt_filename = ?, payment_receipt_original_name = ?,
+          payment_receipt_uploaded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND (
+           commercial_status = 'payment_pending' OR
+           (COALESCE(commercial_status, '') = '' AND lower(trim(estado)) = 'viable (pendiente de pago)'
+             AND lower(trim(COALESCE(plan_elegido, ''))) NOT IN ('', 'analysis', 'analisis inicial'))
+         )`,
+        [req.file.filename, cleanText(req.file.originalname, 255), caso.id]
+      )) return false;
+      if (!runAndCount(
+        `UPDATE public_case_action_tokens SET used_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?`,
+        [tokenRow.id, new Date().toISOString()]
+      )) throw new Error("ACTION_TOKEN_CONSUME_FAILED");
+      run("INSERT INTO case_updates (id, case_id, author_id, mensaje, estado, prioridad, visibility) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [randomUUID(), caso.id, null, "Cliente cargo comprobante de pago.", caso.estado || null, null, "public"]);
+      return true;
+    });
+    if (!saved) {
+      deleteUploadedFile(req.file);
+      return res.status(403).json({ error: "No se pudo autorizar la accion" });
     }
-
-    run(
-      `UPDATE cases
-       SET payment_receipt_filename = ?, payment_receipt_original_name = ?, payment_receipt_uploaded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
-      [req.file.filename, cleanText(req.file.originalname, 255), caso.id]
-    );
-    run(
-      "INSERT INTO case_updates (id, case_id, author_id, mensaje, estado, prioridad) VALUES (?, ?, ?, ?, ?, ?)",
-      [randomUUID(), caso.id, null, "Cliente cargo comprobante de pago.", caso.estado || null, null]
-    );
+    if (oldFilename && oldFilename !== req.file.filename) deleteUploadedFile({ filename: oldFilename });
 
     return res.status(201).json({
       message: "Comprobante cargado correctamente.",
       payment_receipt_uploaded_at: new Date().toISOString()
     });
   } catch (err) {
+    deleteUploadedFile(req.file);
     console.error("PUBLIC PAYMENT RECEIPT ERR:", req.requestId, err.message);
     return res.status(500).json({ error: "No se pudo cargar el comprobante" });
   }
@@ -1849,21 +2326,16 @@ app.post("/api/auth/register", authLimiter, async (req, res) => {
     if (!emailNorm) {
       return res.status(400).json({ error: "Email invalido" });
     }
-
-    const passwordHash = await bcrypt.hash(password, 10);
-    const role = ADMIN_EMAILS.includes(emailNorm) ? "admin" : "user";
-    const verificationToken = AUTH_REQUIRE_EMAIL_VERIFICATION ? randomUUID() : null;
-    if (AUTH_REQUIRE_EMAIL_VERIFICATION && !CAN_SEND_AUTOMATIC_EMAIL) {
-      return res.status(503).json({
-        error: "Verificacion por email no configurada en el servidor",
-        code: "EMAIL_SERVICE_NOT_CONFIGURED"
-      });
+    if (ADMIN_EMAILS.includes(emailNorm)) {
+      return res.status(403).json({ error: "Esta cuenta solo puede administrarse desde el servidor" });
     }
 
+    const passwordHash = await bcrypt.hash(password, 10);
+    const role = "user";
     const userId = randomUUID();
     run(
-      "INSERT INTO users (id, email, password_hash, role, email_verified, verification_token, verification_sent_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
-      [userId, emailNorm, passwordHash, role, AUTH_REQUIRE_EMAIL_VERIFICATION ? 0 : 1, verificationToken]
+      "INSERT INTO users (id, email, password_hash, role, email_verified, created_at) VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)",
+      [userId, emailNorm, passwordHash, role]
     );
     logSecurityEvent(req, {
       userId,
@@ -1873,15 +2345,8 @@ app.post("/api/auth/register", authLimiter, async (req, res) => {
       success: true,
       details: { email: emailNorm, role }
     });
-    if (AUTH_REQUIRE_EMAIL_VERIFICATION) {
-      await sendVerificationEmail({ to: emailNorm, token: verificationToken });
-      return res.status(201).json({ message: "Registro creado. Verifica tu email para activar la cuenta." });
-    }
     return res.status(201).json({ message: "Registro creado correctamente." });
   } catch (err) {
-    if (err?.code === "EMAIL_SEND_FAILED") {
-      return res.status(502).json({ error: `No se pudo enviar el email de verificacion: ${err.message}` });
-    }
     if (String(err.message || "").includes("UNIQUE")) {
       return res.status(409).json({ error: "El email ya esta registrado" });
     }
@@ -1890,7 +2355,7 @@ app.post("/api/auth/register", authLimiter, async (req, res) => {
   }
 });
 
-app.post("/api/auth/login", authLimiter, async (req, res) => {
+app.post("/api/auth/login", loginLimiter, async (req, res) => {
   try {
     const validated = validateBody(loginSchema, req.body);
     if (!validated.ok) {
@@ -1919,7 +2384,7 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
       });
     }
 
-    let user = get("SELECT id, email, password_hash, role, email_verified FROM users WHERE email = ?", [emailNorm]);
+    let user = get("SELECT id, email, password_hash, role FROM users WHERE email = ?", [emailNorm]);
     if (!user) {
       const fail = registerLoginFailure(attemptKey);
       logLoginAudit(req, {
@@ -1946,16 +2411,6 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
       return res.status(401).json({ error: "Credenciales invalidas" });
     }
 
-    if (AUTH_REQUIRE_EMAIL_VERIFICATION && !user.email_verified) {
-      logLoginAudit(req, {
-        userId: user.id,
-        email: emailNorm,
-        success: false,
-        reason: "email_not_verified"
-      });
-      return res.status(403).json({ error: "Email no verificado", code: "EMAIL_NOT_VERIFIED" });
-    }
-
     if (user.role === "user") {
       logLoginAudit(req, {
         userId: user.id,
@@ -1967,11 +2422,6 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
         error: "El acceso para particulares se realiza desde 'Consultar caso' con email + ID de caso",
         code: "USER_PORTAL_DISABLED"
       });
-    }
-
-    if (ADMIN_EMAILS.includes(emailNorm) && user.role !== "admin") {
-      run("UPDATE users SET role = ? WHERE id = ?", ["admin", user.id]);
-      user = { ...user, role: "admin" };
     }
 
     clearLoginFailures(attemptKey);
@@ -2001,7 +2451,7 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
   }
 });
 
-app.post("/api/auth/refresh", authLimiter, async (req, res) => {
+app.post("/api/auth/refresh", refreshLimiter, async (req, res) => {
   try {
     if (!requireCsrfToken(req, res)) {
       logSecurityEvent(req, {
@@ -2061,7 +2511,7 @@ app.post("/api/auth/refresh", authLimiter, async (req, res) => {
       return res.status(401).json({ error: "Sesion expirada. Inicia sesion nuevamente." });
     }
 
-    let user = get("SELECT id, email, role, email_verified FROM users WHERE id = ?", [session.user_id]);
+    let user = get("SELECT id, email, role FROM users WHERE id = ?", [session.user_id]);
     if (!user) {
       revokeRefreshTokenByHash(tokenHash);
       clearRefreshCookie(res);
@@ -2074,24 +2524,6 @@ app.post("/api/auth/refresh", authLimiter, async (req, res) => {
         details: { reason: "user_not_found" }
       });
       return res.status(401).json({ error: "Sesion invalida" });
-    }
-
-    if (AUTH_REQUIRE_EMAIL_VERIFICATION && !user.email_verified) {
-      clearRefreshCookie(res);
-      clearCsrfCookie(res);
-      logSecurityEvent(req, {
-        userId: user.id,
-        eventType: "auth_refresh",
-        resourceType: "session",
-        success: false,
-        details: { reason: "email_not_verified" }
-      });
-      return res.status(403).json({ error: "Email no verificado", code: "EMAIL_NOT_VERIFIED" });
-    }
-
-    if (ADMIN_EMAILS.includes(String(user.email || "").toLowerCase()) && user.role !== "admin") {
-      run("UPDATE users SET role = ? WHERE id = ?", ["admin", user.id]);
-      user = { ...user, role: "admin" };
     }
 
     const rotatedSession = createRefreshTokenSession(req, user.id);
@@ -2152,98 +2584,6 @@ app.post("/api/auth/logout", async (req, res) => {
   }
 });
 
-app.post("/api/auth/resend-verification", authLimiter, async (req, res) => {
-  try {
-    const validated = validateBody(resendVerificationSchema, req.body);
-    if (!validated.ok) {
-      return res.status(400).json({ error: validated.error });
-    }
-    const { email } = validated.data;
-
-    if (!AUTH_REQUIRE_EMAIL_VERIFICATION) {
-      return res.status(200).json({ message: "La verificacion por email no es obligatoria actualmente." });
-    }
-    if (!CAN_SEND_AUTOMATIC_EMAIL) {
-      return res.status(400).json({ error: "Envio de email no configurado" });
-    }
-
-    const emailNorm = cleanText(email, 180)?.toLowerCase();
-    if (!emailNorm) {
-      return res.status(400).json({ error: "Email invalido" });
-    }
-
-    const user = get("SELECT * FROM users WHERE email = ?", [emailNorm]);
-    if (!user) {
-      return res.status(404).json({ error: "Usuario no encontrado" });
-    }
-    if (user.email_verified) {
-      return res.status(200).json({ message: "El email ya esta verificado" });
-    }
-
-    const token = randomUUID();
-    run("UPDATE users SET verification_token = ?, verification_sent_at = CURRENT_TIMESTAMP WHERE id = ?", [
-      token,
-      user.id
-    ]);
-    await sendVerificationEmail({ to: emailNorm, token });
-    return res.json({ message: "Te enviamos un nuevo email de verificacion" });
-  } catch (err) {
-    if (err?.code === "EMAIL_SEND_FAILED") {
-      return res.status(502).json({ error: `No se pudo reenviar la verificacion: ${err.message}` });
-    }
-    console.error("RESEND VERIFY ERR:", req.requestId, err.message);
-    return res.status(500).json({ error: "No se pudo reenviar la verificacion" });
-  }
-});
-
-app.get("/api/auth/verify", async (req, res) => {
-  try {
-    if (!AUTH_REQUIRE_EMAIL_VERIFICATION) {
-      return res.status(200).json({ message: "La verificacion por email no es obligatoria actualmente." });
-    }
-
-    const token = String(req.query.token || "").trim();
-    if (!token) {
-      return res.status(400).json({ error: "Token invalido" });
-    }
-
-    const user = get("SELECT * FROM users WHERE verification_token = ?", [token]);
-    if (!user) {
-      return res.status(400).json({ error: "Token invalido o vencido" });
-    }
-
-    if (user.verification_sent_at) {
-      const sentAtMs = Date.parse(user.verification_sent_at);
-      const maxAgeMs = 24 * 60 * 60 * 1000;
-      if (!Number.isNaN(sentAtMs) && Date.now() - sentAtMs > maxAgeMs) {
-        return res.status(400).json({ error: "Token vencido. Reenvia la verificacion." });
-      }
-    }
-
-    run("UPDATE users SET email_verified = 1, verification_token = NULL WHERE id = ?", [user.id]);
-    const authToken = signToken(user);
-    const refreshSession = createRefreshTokenSession(req, user.id);
-    res.cookie(REFRESH_TOKEN_COOKIE, refreshSession.token, getRefreshCookieOptions());
-    setCsrfCookie(res);
-    logSecurityEvent(req, {
-      userId: user.id,
-      eventType: "auth_verify_email",
-      resourceType: "user",
-      resourceId: user.id,
-      success: true
-    });
-
-    return res.json({
-      message: "Email verificado correctamente",
-      token: authToken,
-      user: { id: user.id, email: user.email, role: user.role }
-    });
-  } catch (err) {
-    console.error("VERIFY ERR:", req.requestId, err.message);
-    return res.status(500).json({ error: "No se pudo verificar el email" });
-  }
-});
-
 app.get("/api/me", authRequired, async (req, res) => {
   try {
     const user = get("SELECT id, email, role, created_at FROM users WHERE id = ?", [req.user.sub]);
@@ -2274,19 +2614,26 @@ app.get("/api/cases", authRequired, async (req, res) => {
          ORDER BY c.created_at DESC`,
         [req.user.sub]
       );
-      return res.json(rows);
+      return res.json(rows.map((row) => sanitizeCaseForRole(row, "enterprise")));
     }
     const rows = all("SELECT * FROM cases WHERE user_id = ? ORDER BY created_at DESC", [req.user.sub]);
-    return res.json(rows);
+    return res.json(rows.map((row) => sanitizeCaseForRole(row, "user")));
   } catch (err) {
     return res.status(500).json({ error: "Error al listar casos" });
   }
 });
 
-app.post("/api/cases", authRequired, maybeUpload, async (req, res) => {
+app.post("/api/cases", authRequired, authenticatedUploadLimiter, maybeUpload, async (req, res) => {
+  const uploadedFiles = req.files || [];
+  let caseCreated = false;
   try {
-    const validated = validateBody(caseCreateSchema, req.body);
+    if (req.user.role === "enterprise") {
+      uploadedFiles.forEach(deleteUploadedFile);
+      return res.status(403).json({ error: "Los casos empresa se incorporan mediante la importacion autorizada" });
+    }
+    const validated = validateBody(publicCaseCreateSchema, req.body);
     if (!validated.ok) {
+      uploadedFiles.forEach(deleteUploadedFile);
       return res.status(400).json({ error: validated.error });
     }
 
@@ -2305,12 +2652,14 @@ app.post("/api/cases", authRequired, maybeUpload, async (req, res) => {
       medios_pago,
       relato,
       autorizacion,
-      plan_elegido,
+      acepta_terminos,
+      acepta_privacidad,
       detalle
     } = body;
 
     const detalleValue = cleanText(relato || detalle, 4000);
     if (!detalleValue) {
+      uploadedFiles.forEach(deleteUploadedFile);
       return res.status(400).json({ error: "La descripcion del caso es obligatoria" });
     }
 
@@ -2324,19 +2673,26 @@ app.post("/api/cases", authRequired, maybeUpload, async (req, res) => {
     const montoEscalaClean = cleanText(monto_escala, 40);
     const montoMonedaClean = cleanText(monto_moneda, 20);
     const relatoClean = cleanText(relato, 4000);
-    const planElegidoClean = cleanText(plan_elegido, 120);
+    const serviceCodeForNewCase = INITIAL_ANALYSIS_SERVICE_CODE;
     const caseCode = generatePublicCaseCode();
+    const files = uploadedFiles.map((file) => ({
+      originalName: file.originalname,
+      filename: file.filename,
+      size: file.size,
+      mimetype: file.mimetype
+    }));
 
     const caseId = randomUUID();
-    const estadoInicial = "Recibido";
+    const estadoInicial = "received";
     const prioridadInicial = "Pendiente";
     const riesgoInicial = "Pendiente";
     run(
       `INSERT INTO cases (
         id, user_id, categoria, detalle, estado, nombre_completo, dni_cuit, email_contacto, telefono,
         entidad, tipo_entidad, monto_valor, monto_escala, monto_moneda, medios_pago, relato,
-        autorizacion, adjuntos, plan_elegido, case_code, prioridad, riesgo
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        autorizacion, terms_accepted, privacy_accepted, consent_version, consent_accepted_at,
+        adjuntos, plan_elegido, service_code, commercial_status, quoted_currency, case_code, prioridad, riesgo
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         caseId,
         req.user.sub,
@@ -2355,22 +2711,31 @@ app.post("/api/cases", authRequired, maybeUpload, async (req, res) => {
         typeof medios_pago === "string" ? medios_pago : JSON.stringify(medios_pago || []),
         relatoClean,
         autorizacion === "true" || autorizacion === true ? 1 : 0,
+        isAccepted(acepta_terminos) ? 1 : 0,
+        isAccepted(acepta_privacidad) ? 1 : 0,
+        POLICY_CONSENT_VERSION,
+        new Date().toISOString(),
         files.length ? JSON.stringify(files) : null,
-        planElegidoClean,
+        serviceCodeForNewCase,
+        serviceCodeForNewCase,
+        "analysis",
+        "ARS",
         caseCode,
         prioridadInicial,
         riesgoInicial
       ]
     );
+    caseCreated = true;
 
     const initialUpdateId = randomUUID();
-    run("INSERT INTO case_updates (id, case_id, author_id, mensaje, estado, prioridad) VALUES (?, ?, ?, ?, ?, ?)", [
+    run("INSERT INTO case_updates (id, case_id, author_id, mensaje, estado, prioridad, visibility) VALUES (?, ?, ?, ?, ?, ?, ?)", [
       initialUpdateId,
       caseId,
       req.user.sub,
       "Caso cargado por el usuario.",
       estadoInicial,
-      null
+      null,
+      "public"
     ]);
     logSecurityEvent(req, {
       userId: req.user.sub,
@@ -2387,6 +2752,7 @@ app.post("/api/cases", authRequired, maybeUpload, async (req, res) => {
     const created = get("SELECT * FROM cases WHERE id = ?", [caseId]);
     return res.status(201).json(created);
   } catch (err) {
+    if (!caseCreated) uploadedFiles.forEach(deleteUploadedFile);
     console.error("CREATE CASE ERR:", err.message);
     if (err.stack) console.error(err.stack);
     return res.status(500).json({ error: "Error al crear el caso" });
@@ -2400,7 +2766,7 @@ app.get("/api/cases/:id", authRequired, async (req, res) => {
     if (!canAccessCase(req.user, caso)) {
       return res.status(403).json({ error: "Acceso restringido" });
     }
-    return res.json(caso);
+    return res.json(sanitizeCaseForRole(caso, req.user.role));
   } catch (err) {
     return res.status(500).json({ error: "Error al obtener caso" });
   }
@@ -2414,14 +2780,20 @@ app.get("/api/cases/:id/updates", authRequired, async (req, res) => {
       return res.status(403).json({ error: "Acceso restringido" });
     }
 
+    const visibilityClause = req.user.role === "admin"
+      ? ""
+      : req.user.role === "enterprise"
+        ? "AND COALESCE(cu.visibility, 'public') <> 'rfa_internal'"
+        : "AND COALESCE(cu.visibility, 'public') = 'public'";
+    const authorSelect = req.user.role === "admin"
+      ? ", u.email AS author_email"
+      : "";
     const rows = all(
-      `
-      SELECT cu.*, u.email AS author_email
-      FROM case_updates cu
-      LEFT JOIN users u ON u.id = cu.author_id
-      WHERE cu.case_id = ?
-      ORDER BY cu.created_at DESC, cu.rowid DESC
-      `,
+      `SELECT cu.*${authorSelect}
+       FROM case_updates cu
+       LEFT JOIN users u ON u.id = cu.author_id
+       WHERE cu.case_id = ? ${visibilityClause}
+       ORDER BY cu.created_at DESC, cu.rowid DESC`,
       [req.params.id]
     );
     return res.json(rows);
@@ -2494,34 +2866,49 @@ app.get("/api/cases/:id/payment-receipt", authRequired, async (req, res) => {
 app.post("/api/cases/:id/updates", authRequired, async (req, res) => {
   try {
     const validated = validateBody(caseUpdateSchema, req.body);
-    if (!validated.ok) {
-      return res.status(400).json({ error: validated.error });
-    }
+    if (!validated.ok) return res.status(400).json({ error: validated.error });
+
+    const caso = get("SELECT * FROM cases WHERE id = ?", [req.params.id]);
+    if (!caso) return res.status(404).json({ error: "Caso no encontrado" });
+    if (!canAccessCase(req.user, caso)) return res.status(403).json({ error: "Acceso restringido" });
+
+    const isAdmin = req.user.role === "admin";
+    const isEnterprise = req.user.role === "enterprise";
+    const isEnterpriseCase = Boolean(caso.enterprise_user_id);
+    if (!isAdmin && !isEnterprise) return res.status(403).json({ error: "Acceso restringido" });
+
+    const data = validated.data;
     const {
       mensaje,
       estado,
+      plan_elegido,
+      service_code,
+      quoted_amount,
+      quoted_currency,
+      quoted_scope,
+      commercial_status,
+      message_visibility,
       prioridad,
       riesgo,
       documentacion_estado,
       observaciones_empresa,
       observaciones_rfa,
       descripcion_breve
-    } =
-      validated.data;
+    } = data;
 
-    const caso = get("SELECT * FROM cases WHERE id = ?", [req.params.id]);
-    if (!caso) return res.status(404).json({ error: "Caso no encontrado" });
-    if (!canAccessCase(req.user, caso)) {
-      return res.status(403).json({ error: "Acceso restringido" });
+    const proposalFields = ["service_code", "quoted_amount", "quoted_currency", "quoted_scope", "commercial_status"];
+    const hasProposalInput = proposalFields.some((field) => Object.prototype.hasOwnProperty.call(data, field));
+    if (Object.prototype.hasOwnProperty.call(data, "plan_elegido") && plan_elegido != null) {
+      return res.status(400).json({ error: "plan_elegido es un campo historico; usa service_code" });
+    }
+    if (hasProposalInput && (!isAdmin || isEnterpriseCase)) {
+      return res.status(403).json({ error: "La propuesta comercial solo se administra en casos particulares" });
+    }
+    if (isEnterprise && (riesgo != null || documentacion_estado != null || observaciones_rfa != null)) {
+      return res.status(403).json({ error: "La evaluacion RFA solo puede ser modificada por administracion" });
     }
 
-    const isAdmin = req.user.role === "admin";
-    const isEnterprise = req.user.role === "enterprise";
-    if (!isAdmin && !isEnterprise) {
-      return res.status(403).json({ error: "Acceso restringido" });
-    }
-
-    const allowedStatusEnterprise = new Set([
+    const allowedEnterpriseStatuses = new Set([
       "pendiente",
       "en analisis",
       "respondido",
@@ -2532,44 +2919,25 @@ app.post("/api/cases/:id/updates", authRequired, async (req, res) => {
       "observacion interna",
       "resuelto",
       "cerrado",
-      // compatibilidad
       "recibido",
-      "en analisis",
       "pendiente interno"
     ]);
-    const allowedStatusAdmin = new Set([
-      "recibido",
-      "en analisis",
-      "documentacion solicitada",
-      "viable (pendiente de pago)",
-      "no viable",
-      "presentado ante entidad",
-      "en espera de respuesta",
-      "respuesta recibida",
-      "cerrado"
-    ]);
-    const allowedPriority = new Set([
-      "pendiente",
-      "normal",
-      "alta",
-      "critica",
-      // compatibilidad
-      "media",
-      "baja"
-    ]);
+    const allowedPriority = new Set(["pendiente", "normal", "alta", "critica", "media", "baja"]);
     const allowedRisk = new Set(["pendiente", "bajo", "medio", "alto", "critico"]);
-    const allowedDocumentation = new Set(["completa", "incompleta", "en revision"]);
+    const allowedDocumentation = new Set(["completa", "incompleta", "en revision", "parcial", "sin documentacion"]);
 
     const normalizedStatus = normalizeCompareText(estado);
     const normalizedPriority = normalizeCompareText(prioridad);
     const normalizedRisk = normalizeCompareText(riesgo);
     const normalizedDocumentation = normalizeCompareText(documentacion_estado);
 
-    if (isAdmin && estado && !allowedStatusAdmin.has(normalizedStatus)) {
-      return res.status(400).json({ error: "Estado invalido" });
-    }
-    if (isEnterprise && estado && !allowedStatusEnterprise.has(normalizedStatus)) {
-      return res.status(400).json({ error: "Estado invalido para usuario empresa" });
+    if (estado) {
+      if (isEnterpriseCase && !allowedEnterpriseStatuses.has(normalizedStatus)) {
+        return res.status(400).json({ error: "Estado invalido para un caso empresa" });
+      }
+      if (!isEnterpriseCase && !PARTICULAR_OPERATIONAL_STATUSES.has(String(estado))) {
+        return res.status(400).json({ error: "Estado operativo invalido" });
+      }
     }
     if (prioridad && !allowedPriority.has(normalizedPriority)) {
       return res.status(400).json({ error: "Prioridad invalida" });
@@ -2581,31 +2949,44 @@ app.post("/api/cases/:id/updates", authRequired, async (req, res) => {
       return res.status(400).json({ error: "Estado de documentacion invalido" });
     }
 
-    const messageText = isNonEmptyString(mensaje)
-      ? cleanText(mensaje, 3000)
-      : isEnterprise
-        ? "Actualizacion interna de empresa."
-        : "";
-    if (!isEnterprise && !messageText) {
-      return res.status(400).json({ error: "El mensaje es obligatorio" });
-    }
-    if (
-      !isAdmin &&
-      isNonEmptyString(observaciones_rfa)
-    ) {
-      return res.status(403).json({ error: "Solo RFA puede editar observaciones tecnicas" });
-    }
+    const amountResult = normalizeQuotedAmount(quoted_amount);
+    if (amountResult.error) return res.status(400).json({ error: amountResult.error });
+    const nextServiceCode = service_code !== undefined
+      ? cleanText(service_code, 80)
+      : cleanText(caso.service_code, 80) || INITIAL_ANALYSIS_SERVICE_CODE;
+    const nextAmount = amountResult.provided ? amountResult.value : caso.quoted_amount ?? null;
+    const nextCurrency = quoted_currency !== undefined
+      ? String(quoted_currency || "ARS").trim().toUpperCase()
+      : caso.quoted_currency || "ARS";
+    const nextScope = quoted_scope !== undefined
+      ? cleanText(quoted_scope, 4000)
+      : caso.quoted_scope || null;
+    const nextCommercialStatus = commercial_status !== undefined
+      ? cleanText(commercial_status, 40)
+      : caso.commercial_status || "analysis";
 
-    const updateId = randomUUID();
-    const updateStatusValue = isAdmin ? (estado || null) : null;
-    run("INSERT INTO case_updates (id, case_id, author_id, mensaje, estado, prioridad) VALUES (?, ?, ?, ?, ?, ?)", [
-      updateId,
-      req.params.id,
-      req.user.sub,
-      messageText,
-      updateStatusValue,
-      prioridad || null
-    ]);
+    if (hasProposalInput) {
+      if (!PARTICULAR_SERVICE_CODES.has(String(nextServiceCode || ""))) {
+        return res.status(400).json({ error: "Servicio RFA invalido" });
+      }
+      if (nextCurrency !== "ARS") {
+        return res.status(400).json({ error: "La moneda de la propuesta debe ser ARS" });
+      }
+      if (!COMMERCIAL_STATUSES.has(String(nextCommercialStatus || ""))) {
+        return res.status(400).json({ error: "Situacion comercial invalida" });
+      }
+      if (nextCommercialStatus !== "analysis") {
+        if (!PAID_SERVICE_CODES.has(String(nextServiceCode || ""))) {
+          return res.status(400).json({ error: "Selecciona un servicio pago para enviar la propuesta" });
+        }
+        if (!Number.isSafeInteger(Number(nextAmount)) || Number(nextAmount) < 1) {
+          return res.status(400).json({ error: "Indica un precio valido para la propuesta" });
+        }
+        if (!nextScope) {
+          return res.status(400).json({ error: "Indica el alcance de la propuesta" });
+        }
+      }
+    }
 
     const normalizePriorityValue = (value, fallback) => {
       if (!value) return fallback || null;
@@ -2628,26 +3009,80 @@ app.post("/api/cases/:id/updates", authRequired, async (req, res) => {
     const normalizeDocumentationValue = (value, fallback) => {
       if (!value) return fallback || null;
       if (normalizedDocumentation === "en revision") return "En revisión";
+      if (normalizedDocumentation === "sin documentacion") return "Sin documentación";
+      if (normalizedDocumentation === "parcial") return "Parcial";
       if (normalizedDocumentation === "completa") return "Completa";
       if (normalizedDocumentation === "incompleta") return "Incompleta";
       return value;
     };
-    const newEstado = isAdmin ? (estado || caso.estado) : caso.estado;
+
+    const newEstado = estado || caso.estado;
     const newPrioridad = normalizePriorityValue(prioridad, caso.prioridad);
     const newRiesgo = normalizeRiskValue(riesgo, caso.riesgo);
     const newDocumentacion = normalizeDocumentationValue(documentacion_estado, caso.documentacion_estado);
-    const newObsEmpresa =
-      observaciones_empresa !== undefined ? cleanText(observaciones_empresa, 3000) : caso.observaciones_empresa || null;
-    const newObsRfa =
-      observaciones_rfa !== undefined ? cleanText(observaciones_rfa, 3000) : caso.observaciones_rfa || null;
-    const newDescripcion =
-      descripcion_breve !== undefined ? cleanText(descripcion_breve, 4000) : cleanText(caso.detalle, 4000);
+    const newObsEmpresa = observaciones_empresa !== undefined
+      ? cleanText(observaciones_empresa, 3000)
+      : caso.observaciones_empresa || null;
+    const newObsRfa = isAdmin && observaciones_rfa !== undefined
+      ? cleanText(observaciones_rfa, 3000)
+      : caso.observaciones_rfa || null;
+    const newDescripcion = descripcion_breve !== undefined
+      ? cleanText(descripcion_breve, 4000)
+      : cleanText(caso.detalle, 4000);
+
+    const now = new Date().toISOString();
+    const nextQuotedAt = nextCommercialStatus !== "analysis" && !caso.quoted_at ? now : caso.quoted_at || null;
+    const nextAcceptedAt = ["accepted", "payment_pending", "paid"].includes(nextCommercialStatus) && !caso.proposal_accepted_at
+      ? now
+      : caso.proposal_accepted_at || null;
+    const nextPaymentConfirmedAt = nextCommercialStatus === "paid" && !caso.payment_confirmed_at
+      ? now
+      : caso.payment_confirmed_at || null;
+
+    const messageText = isNonEmptyString(mensaje)
+      ? cleanText(mensaje, 3000)
+      : isEnterprise
+        ? "Actualizacion interna de empresa."
+        : "Actualizacion interna RFA.";
+    const visibility = isEnterprise
+      ? "enterprise_internal"
+      : message_visibility === "public" && isNonEmptyString(mensaje)
+        ? "public"
+        : "rfa_internal";
+
+    const updateId = randomUUID();
+    run(
+      "INSERT INTO case_updates (id, case_id, author_id, mensaje, estado, prioridad, visibility) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [updateId, req.params.id, req.user.sub, messageText, estado || null, prioridad || null, visibility]
+    );
     run(
       `UPDATE cases
-       SET estado = ?, prioridad = ?, riesgo = ?, documentacion_estado = ?, observaciones_empresa = ?, observaciones_rfa = ?, detalle = ?, relato = ?, updated_at = CURRENT_TIMESTAMP
+       SET estado = ?, prioridad = ?, riesgo = ?, documentacion_estado = ?,
+           observaciones_empresa = ?, observaciones_rfa = ?, detalle = ?, relato = ?,
+           service_code = ?, quoted_amount = ?, quoted_currency = ?, quoted_scope = ?, commercial_status = ?,
+           quoted_at = ?, proposal_accepted_at = ?, payment_confirmed_at = ?, updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [newEstado, newPrioridad, newRiesgo, newDocumentacion, newObsEmpresa, newObsRfa, newDescripcion, newDescripcion, req.params.id]
+      [
+        newEstado,
+        newPrioridad,
+        newRiesgo,
+        newDocumentacion,
+        newObsEmpresa,
+        newObsRfa,
+        newDescripcion,
+        newDescripcion,
+        isEnterpriseCase ? caso.service_code || null : nextServiceCode,
+        isEnterpriseCase ? caso.quoted_amount || null : nextAmount,
+        isEnterpriseCase ? caso.quoted_currency || null : nextCurrency,
+        isEnterpriseCase ? caso.quoted_scope || null : nextScope,
+        isEnterpriseCase ? caso.commercial_status || null : nextCommercialStatus,
+        isEnterpriseCase ? caso.quoted_at || null : nextQuotedAt,
+        isEnterpriseCase ? caso.proposal_accepted_at || null : nextAcceptedAt,
+        isEnterpriseCase ? caso.payment_confirmed_at || null : nextPaymentConfirmedAt,
+        req.params.id
+      ]
     );
+
     logSecurityEvent(req, {
       userId: req.user.sub,
       eventType: "case_update",
@@ -2657,38 +3092,31 @@ app.post("/api/cases/:id/updates", authRequired, async (req, res) => {
       details: {
         fromEstado: caso.estado || null,
         toEstado: newEstado || null,
-        fromPrioridad: caso.prioridad || null,
-        toPrioridad: newPrioridad || null,
-        fromRiesgo: caso.riesgo || null,
-        toRiesgo: newRiesgo || null,
-        fromDocumentacion: caso.documentacion_estado || null,
-        toDocumentacion: newDocumentacion || null,
-        actorRole: req.user.role
+        fromCommercialStatus: caso.commercial_status || null,
+        toCommercialStatus: isEnterpriseCase ? null : nextCommercialStatus,
+        actorRole: req.user.role,
+        visibility
       }
     });
 
-    const createdUpdate = get("SELECT * FROM case_updates WHERE id = ?", [updateId]);
-    if (isAdmin && estado && estado !== caso.estado) {
-      const owner = get("SELECT email FROM users WHERE id = ?", [caso.user_id]);
-      const to = (caso.email_contacto || owner?.email || "").trim();
-      await sendStatusEmail({ to, status: newEstado, message: messageText, caseId: caso.id });
-    }
-    return res.status(201).json(createdUpdate);
+    return res.status(201).json({
+      update: get("SELECT * FROM case_updates WHERE id = ?", [updateId]),
+      case: get("SELECT * FROM cases WHERE id = ?", [req.params.id])
+    });
   } catch (err) {
-    return res.status(500).json({ error: "Error al crear actualizacion" });
+    console.error("CASE UPDATE ERR:", req.requestId, err.message);
+    return res.status(500).json({ error: "Error al actualizar el caso" });
   }
 });
-app.post("/api/cases/import", authRequired, importUpload.any(), async (req, res) => {
+
+app.post("/api/cases/import", authRequired, adminOnly, importLimiter, importUpload.any(), async (req, res) => {
   let importedCount = 0;
   let rejectedCount = 0;
   let importedFailed = false;
   let targetEnterpriseUserId = "";
   try {
-    if (req.user?.role !== "admin" && req.user?.role !== "enterprise") {
-      return res.status(403).json({ error: "Acceso restringido" });
-    }
     const requestedEnterpriseUserId = String(req.body?.enterprise_user_id || "").trim();
-    const enterpriseUserId = req.user?.role === "enterprise" ? req.user.sub : requestedEnterpriseUserId;
+    const enterpriseUserId = requestedEnterpriseUserId;
     if (!enterpriseUserId) {
       return res.status(400).json({ error: "Debes seleccionar un usuario empresa" });
     }
@@ -2703,11 +3131,14 @@ app.post("/api/cases/import", authRequired, importUpload.any(), async (req, res)
     if (!files.length) {
       return res.status(400).json({ error: "Debes adjuntar al menos un archivo (CSV/Excel)" });
     }
+    const uploadError = validateUploadedFiles(files, { totalLimit: IMPORT_MAX_TOTAL_BYTES, importFile: true });
+    if (uploadError) return res.status(400).json({ error: uploadError });
     const rows = [];
-    files.forEach((file) => {
-      const fileRows = parseImportFileRows(file);
+    for (const file of files) {
+      const fileRows = await parseImportFileRows(file);
+      if (rows.length + fileRows.length > IMPORT_MAX_ROWS) throw new Error("IMPORT_ROW_LIMIT");
       fileRows.forEach((row) => rows.push({ ...row, __source_file: file.originalname || file.filename }));
-    });
+    }
     if (!rows.length) {
       return res.status(400).json({ error: "Archivos vacios o sin filas validas" });
     }
@@ -2987,13 +3418,14 @@ app.post("/api/cases/import", authRequired, importUpload.any(), async (req, res)
         ]
       );
 
-      run("INSERT INTO case_updates (id, case_id, author_id, mensaje, estado, prioridad) VALUES (?, ?, ?, ?, ?, ?)", [
+      run("INSERT INTO case_updates (id, case_id, author_id, mensaje, estado, prioridad, visibility) VALUES (?, ?, ?, ?, ?, ?, ?)", [
         randomUUID(),
         caseId,
         req.user.sub,
         mergedObservaciones || "Caso importado masivamente por RFA.",
         estado,
-        prioridad
+        prioridad,
+        "enterprise_internal"
       ]);
       importedRows.push({ line, file: sourceFile || null, case_code: caseCode });
     });
@@ -3009,7 +3441,14 @@ app.post("/api/cases/import", authRequired, importUpload.any(), async (req, res)
     });
   } catch (err) {
     importedFailed = true;
-    console.error("IMPORT CASES ERR:", err.message);
+    if (["IMPORT_ROW_LIMIT", "IMPORT_COLUMN_LIMIT", "IMPORT_PARSE_TIMEOUT", "IMPORT_WORKER_FAILED", "IMPORT_FILE_INVALID"].includes(err.message)) {
+      return res.status(400).json({ error: err.message === "IMPORT_ROW_LIMIT"
+        ? `La importacion supera el maximo de ${IMPORT_MAX_ROWS} filas.`
+        : err.message === "IMPORT_COLUMN_LIMIT"
+          ? `La importacion supera el maximo de ${IMPORT_MAX_COLUMNS} columnas.`
+          : "No se pudo procesar uno de los archivos. Verifica que sea un CSV o XLSX valido y vuelve a intentar." });
+    }
+    console.error("IMPORT CASES ERR:", req.requestId, err.message);
     return res.status(500).json({ error: "Error al importar casos masivos" });
   } finally {
     try {
@@ -3039,11 +3478,31 @@ app.post("/api/cases/import", authRequired, importUpload.any(), async (req, res)
 app.get("/api/casos", (req, res) => res.redirect(307, "/api/cases"));
 app.post("/api/casos", (req, res) => res.redirect(307, "/api/cases"));
 
-app.use((err, _req, res, next) => {
+app.use((err, req, res, next) => {
   if (!err) return next();
+  (req.files || []).forEach(deleteUploadedFile);
+  deleteUploadedFile(req.file);
+  if (req.path === "/api/public/cases") {
+    if (err.code === "UNSUPPORTED_FILE_TYPE") {
+      return res.status(400).json({
+        error: `El archivo "${err.fileName || "seleccionado"}" tiene un formato no permitido. Usá PDF, PNG, JPG/JPEG, DOC, DOCX o TXT.`
+      });
+    }
+    if (err.code === "LIMIT_FILE_SIZE") {
+      return res.status(413).json({ error: "Un archivo supera el límite de 25 MB. Revisá el tamaño de cada adjunto." });
+    }
+    if (err.code === "LIMIT_FILE_COUNT" || err.code === "LIMIT_UNEXPECTED_FILE") {
+      return res.status(400).json({ error: `Podés adjuntar hasta ${CASE_ATTACHMENT_MAX_FILES} archivos.` });
+    }
+  }
+  if (err.code === "UNSUPPORTED_FILE_TYPE") {
+    return res.status(400).json({ error: "Error de carga de archivos" });
+  }
   if (err instanceof multer.MulterError) {
     if (err.code === "LIMIT_FILE_SIZE") {
-      return res.status(413).json({ error: "Adjunto demasiado grande (maximo 25MB por archivo)" });
+      if (req.path === "/api/cases/import") return res.status(413).json({ error: "Un archivo de importacion supera 10 MB." });
+      if (req.path === "/api/public/case-payment-receipt") return res.status(413).json({ error: "El comprobante supera el limite de 25 MB." });
+      return res.status(413).json({ error: "Un adjunto supera el limite permitido." });
     }
     return res.status(400).json({ error: "Error de carga de archivos" });
   }
@@ -3055,13 +3514,7 @@ app.use((err, _req, res, next) => {
 
 initSqlJs({ locateFile: (file) => path.join(__dirname, "node_modules", "sql.js", "dist", file) })
   .then((SQL) => {
-    if (fs.existsSync(DB_PATH)) {
-      const filebuffer = fs.readFileSync(DB_PATH);
-      db = new SQL.Database(new Uint8Array(filebuffer));
-    } else {
-      db = new SQL.Database();
-    }
-    // Recuperacion simple ante corte durante persistencia atomica.
+    // Recuperar el archivo persistido antes de abrirlo en memoria.
     try {
       const bakPath = `${DB_PATH}.bak`;
       if (!fs.existsSync(DB_PATH) && fs.existsSync(bakPath)) {
@@ -3074,28 +3527,33 @@ initSqlJs({ locateFile: (file) => path.join(__dirname, "node_modules", "sql.js",
     } catch (err) {
       console.warn("DB RECOVERY WARN:", err.message);
     }
+    if (fs.existsSync(DB_PATH)) {
+      const filebuffer = fs.readFileSync(DB_PATH);
+      db = new SQL.Database(new Uint8Array(filebuffer));
+    } else {
+      db = new SQL.Database();
+    }
     initDb();
     ensureAdminAccounts();
-    if (!CAN_SEND_AUTOMATIC_EMAIL) {
-      console.warn("AUTH WARN: envio automatico de email desactivado.");
-    }
-    try {
-      const firstPurge = purgeExpiredClosedCases();
-      console.log("PURGE INIT:", JSON.stringify(firstPurge));
-    } catch (err) {
-      console.error("PURGE INIT ERR:", err.message);
-    }
-    const purgeIntervalMs = DATA_PURGE_INTERVAL_HOURS * 60 * 60 * 1000;
-    setInterval(() => {
+    if (DATA_PURGE_ENABLED) {
       try {
-        const result = purgeExpiredClosedCases();
-        if (result.deletedUserCases > 0 || result.deletedEnterpriseCases > 0) {
-          console.log("PURGE RUN:", JSON.stringify(result));
-        }
+        const firstPurge = purgeExpiredClosedCases();
+        console.log("PURGE INIT:", JSON.stringify(firstPurge));
       } catch (err) {
-        console.error("PURGE RUN ERR:", err.message);
+        console.error("PURGE INIT ERR:", err.message);
       }
-    }, purgeIntervalMs);
+      const purgeIntervalMs = DATA_PURGE_INTERVAL_HOURS * 60 * 60 * 1000;
+      setInterval(() => {
+        try {
+          const result = purgeExpiredClosedCases();
+          if (result.deletedUserCases > 0 || result.deletedEnterpriseCases > 0) {
+            console.log("PURGE RUN:", JSON.stringify(result));
+          }
+        } catch (err) {
+          console.error("PURGE RUN ERR:", err.message);
+        }
+      }, purgeIntervalMs);
+    }
     server = app.listen(PORT, () => {
       console.log(`Servidor corriendo en el puerto ${PORT}`);
     });

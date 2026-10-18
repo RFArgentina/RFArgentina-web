@@ -3,8 +3,16 @@
 __pycache__/
 *.log
 RFA-descargas/
-backend/rfa.db
+backend/rfa.db*
+backend/*.db
+backend/*.db-*
 backend/uploads/
+backend/backups/
+*.bak
+backend/*.db.tmp
+backend/*.db-journal
+backend/*.db-wal
+backend/*.db-shm
 backend/node_modules/
 scripts/
 puntoenvrfa.txt

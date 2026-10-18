@@ -1,7 +1,7 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "description": "Servidor oficial del Sistema de Reclamos Financieros Argentina (RFA)",
+  "description": "Servidor oficial de RFA para la gestión de reclamos financieros y de consumo",
   "main": "server.js",
   "type": "module",
   "scripts": {
@@ -12,7 +12,6 @@
     "release:check": "npm run backup:db && npm run preflight:prod"
   },
   "dependencies": {
-    "@sendgrid/mail": "^8.1.6",
     "axios": "^1.13.0",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.7",
@@ -24,8 +23,8 @@
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",
     "node-fetch": "^3.3.2",
+    "read-excel-file": "^9.3.12",
     "sql.js": "^1.10.3",
-    "xlsx": "^0.18.5",
     "xml2js": "^0.6.2",
     "zod": "^4.3.6"
   },

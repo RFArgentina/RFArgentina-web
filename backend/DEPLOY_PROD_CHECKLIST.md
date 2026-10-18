@@ -9,10 +9,6 @@
   - `REFRESH_TOKEN_SECURE_COOKIE=true`
   - `REFRESH_TOKEN_SAME_SITE=lax` (o `none` si necesitas cross-site)
   - `TRUST_PROXY=true` si usas reverse proxy
-- Si usas verificacion por email:
-  - `AUTH_REQUIRE_EMAIL_VERIFICATION=true`
-  - `SENDGRID_API_KEY` y `EMAIL_FROM`
-
 Valores sugeridos para `rfargentina.com`:
 - `APP_BASE_URL=https://rfargentina.com`
 - `CORS_ORIGINS=https://rfargentina.com,https://www.rfargentina.com`
@@ -35,8 +31,10 @@ Comando rapido de validacion prod:
 ## 3) Inicializacion y backup
 - Confirmar backup inicial:
   - `npm run backup:db`
+- Confirmar que `BACKUP_DIR` apunta al disco persistente (por ejemplo `/var/data/backups`).
 - Programar backup diario (Task Scheduler/cron):
   - `npm run backup:db`
+- Antes de produccion y luego periodicamente, restaurar una copia en una instancia/base aislada, comprobar integridad (`PRAGMA integrity_check`) y verificar que los casos y archivos asociados sean legibles. Nunca hacer esta prueba sobre la base productiva.
 
 ## 4) Arranque y smoke test
 - Iniciar backend:
@@ -55,5 +53,6 @@ Comando rapido de validacion prod:
 
 ## 6) Publicacion
 - Confirmar que `.env`, DB y uploads no se suben al repo.
+- Confirmar que `UPLOADS_PATH` y `SQLITE_PATH` usan almacenamiento persistente y configurar alertas/cuota de disco desde el proveedor de hosting; la cuota no se aplica de forma fiable desde Express.
 - Hacer commit solo de codigo/config seguros.
 - Publicar y volver a ejecutar smoke test.

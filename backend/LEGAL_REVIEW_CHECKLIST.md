@@ -32,7 +32,7 @@ Fecha de base: 14 de febrero de 2026
 
 6. Jurisdiccion y ley aplicable:
 - Confirmar redaccion final para relaciones B2C y B2B.
-- Ajustar fuero competente segun estrategia legal del estudio.
+- Ajustar fuero competente según la revisión profesional externa que corresponda.
 
 7. Empresa (B2B):
 - Validar responsabilidad compartida sobre gestion de usuarios internos.
@@ -43,4 +43,4 @@ Fecha de base: 14 de febrero de 2026
 
 ## Recomendacion operativa
 - Versionar documentos legales con fecha y numero de version.
-- Registrar aceptacion de TyC/Privacidad en backend (fecha, IP, version de texto) en siguiente iteracion.
+- Verificar el registro implementado de aceptación de TyC/Privacidad (fecha y versión de texto).

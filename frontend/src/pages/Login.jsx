@@ -24,9 +24,7 @@ export default function Login() {
       setToken(data.token);
       navigate("/panel");
     } catch (err) {
-      if (err.code === "EMAIL_NOT_VERIFIED") {
-        setError("No se pudo iniciar sesion con esas credenciales.");
-      } else if (err.code === "USER_PORTAL_DISABLED") {
+      if (err.code === "USER_PORTAL_DISABLED") {
         setError("El acceso de particulares se realiza desde 'Consultar caso' con email + ID de caso.");
       } else {
         setError(err.message);
@@ -37,7 +35,7 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 px-6 py-16 pt-24 flex items-center justify-center">
+    <div className="min-h-screen bg-[#001440] text-slate-900 px-6 py-16 pt-24 flex items-center justify-center">
       <div className="w-full max-w-4xl grid md:grid-cols-2 gap-8">
         <div className="hidden md:flex flex-col justify-between rounded-2xl p-8 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-950 text-white shadow-xl">
           <div>

@@ -43,20 +43,11 @@ export default function Header() {
   return (
     <header className="bg-slate-950/80 backdrop-blur text-white fixed top-0 left-0 w-full z-30 border-b border-white/10">
       <div className="max-w-6xl mx-auto flex items-center justify-between px-6 py-3">
-        <Link to="/" className="flex items-center gap-3" onClick={handleLinkClick}>
-          <span
-            className="text-emerald-300 font-bold tracking-[0.35em] text-2xl md:text-3xl"
-            style={{ fontFamily: '"Playfair Display", "Times New Roman", serif' }}
-          >
-            RFA
-          </span>
-        </Link>
-
         <nav className="hidden md:flex space-x-6">
           <button type="button" onClick={() => handleNav("inicio")} className="hover:text-emerald-300 transition">
             Inicio
           </button>
-          <button type="button" onClick={() => handleNav("servicios")} className="hover:text-emerald-300 transition">
+          <button type="button" onClick={() => handleNav("modalidades")} className="hover:text-emerald-300 transition">
             Servicios
           </button>
           <button type="button" onClick={() => handleNav("contacto")} className="hover:text-emerald-300 transition">
@@ -118,7 +109,7 @@ export default function Header() {
           <button type="button" className="block hover:text-emerald-300 transition" onClick={() => handleNav("inicio")}>
             Inicio
           </button>
-          <button type="button" className="block hover:text-emerald-300 transition" onClick={() => handleNav("servicios")}>
+          <button type="button" className="block hover:text-emerald-300 transition" onClick={() => handleNav("modalidades")}>
             Servicios
           </button>
           <button type="button" className="block hover:text-emerald-300 transition" onClick={() => handleNav("contacto")}>

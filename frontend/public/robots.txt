@@ -1,5 +1,5 @@
 # robots.txt for https://rfargentina.com/
-# Reclamos Financieros Argentina - Consultoría financiera con alcance legal
+# Reclamos Financieros Argentina - Gestión de reclamos financieros y de consumo
 
 
 User-agent: *

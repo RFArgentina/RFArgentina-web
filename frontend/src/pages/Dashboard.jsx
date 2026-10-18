@@ -1,19 +1,85 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { apiRequest } from "@/lib/api";
+import { escapeCsvCell } from "@/lib/csv";
 import { clearToken, getToken } from "@/lib/auth";
 import { formatDateAr, formatDateTimeAr } from "@/lib/datetime";
 import { Button } from "@/components/ui/button";
-import { plans } from "@/data/plans";
+import {
+  analysisService,
+  getServiceDisplayName,
+  historicalPlans,
+  plans
+} from "@/data/plans";
+import {
+  commercialStatusOptions,
+  formatQuotedAmount,
+  getCaseServiceValue,
+  getCommercialStatusLabel,
+  getEffectiveCommercialStatus,
+  getOperationalStatusLabel,
+  operationalStatusOptions
+} from "@/data/caseModel";
 
-const FIRST_CONTACT_PLAN = "Primer contacto (sin cargo)";
 const PUBLIC_INTAKE_EMAIL = "intake.publico@rfargentina.com";
+const PUBLIC_CASE_ATTACHMENT_MAX_FILES = 5;
+const PUBLIC_CASE_ATTACHMENT_MAX_FILE_BYTES = 25 * 1024 * 1024;
+const PUBLIC_CASE_ATTACHMENT_MAX_TOTAL_BYTES = 50 * 1024 * 1024;
+const PUBLIC_CASE_ATTACHMENT_TYPES = {
+  ".pdf": "application/pdf",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".doc": "application/msword",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".txt": "text/plain"
+};
+const publicCaseCategories = [
+  "Compra no entregada",
+  "Producto defectuoso o distinto al ofrecido",
+  "Garantía incumplida",
+  "Devolución o reintegro pendiente",
+  "Cobro indebido o duplicado",
+  "Baja o cancelación que continúa facturándose",
+  "Transferencia o pago con inconvenientes",
+  "Servicio o suscripción",
+  "Problema con seguro",
+  "Problema con viaje o turismo",
+  "Otro problema"
+];
+
+const isNewAdminCase = (caseItem) =>
+  !caseItem.enterprise_user_id && caseItem.service_code === analysisService.code;
+
+function validatePublicCaseAttachments(files) {
+  if (files.length > PUBLIC_CASE_ATTACHMENT_MAX_FILES) {
+    return `Podés adjuntar hasta ${PUBLIC_CASE_ATTACHMENT_MAX_FILES} archivos. Seleccionaste ${files.length}.`;
+  }
+
+  let totalBytes = 0;
+  for (const file of files) {
+    const extension = `.${String(file.name || "").split(".").pop()}`.toLowerCase();
+    if (!PUBLIC_CASE_ATTACHMENT_TYPES[extension] || PUBLIC_CASE_ATTACHMENT_TYPES[extension] !== file.type.toLowerCase()) {
+      return `El archivo "${file.name}" tiene un formato no permitido. Usá PDF, PNG, JPG/JPEG, DOC, DOCX o TXT.`;
+    }
+    if (file.size > PUBLIC_CASE_ATTACHMENT_MAX_FILE_BYTES) {
+      return `El archivo "${file.name}" supera el límite de 25 MB.`;
+    }
+    totalBytes += file.size;
+    if (totalBytes > PUBLIC_CASE_ATTACHMENT_MAX_TOTAL_BYTES) {
+      return `Los archivos seleccionados superan el límite total de 50 MB; revisá "${file.name}".`;
+    }
+  }
+
+  return "";
+}
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const location = useLocation();
   const token = getToken();
   const isPublicCreateMode = !token && location.pathname === "/crear-caso";
+  const isCreateCasePage = location.pathname === "/crear-caso";
   const [cases, setCases] = useState([]);
   const [user, setUser] = useState(null);
   const [categoria, setCategoria] = useState("");
@@ -24,21 +90,22 @@ export default function Dashboard() {
   const [entidad, setEntidad] = useState("");
   const [tipoEntidad, setTipoEntidad] = useState("");
   const [montoValor, setMontoValor] = useState("");
-  const [planElegido, setPlanElegido] = useState("");
   const [montoEscala, setMontoEscala] = useState("");
-  const [montoMoneda, setMontoMoneda] = useState("");
-  const [mediosPago, setMediosPago] = useState([]);
+  const [montoMoneda, setMontoMoneda] = useState("ARS");
   const [relato, setRelato] = useState("");
   const [autorizacion, setAutorizacion] = useState(false);
+  const [aceptaTerminos, setAceptaTerminos] = useState(false);
+  const [aceptaPrivacidad, setAceptaPrivacidad] = useState(false);
   const [adjuntos, setAdjuntos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [publicActionLink, setPublicActionLink] = useState(null);
+  const [creatingPublicActionLink, setCreatingPublicActionLink] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [updates, setUpdates] = useState({});
   const [expandedCaseId, setExpandedCaseId] = useState(null);
-  const [expandedCaseDetailId, setExpandedCaseDetailId] = useState(null);
+  const [adminDetailTab, setAdminDetailTab] = useState("summary");
   const [expandedInquiryId, setExpandedInquiryId] = useState(null);
-  const [transferPlanId, setTransferPlanId] = useState(null);
   const [infoPlanId, setInfoPlanId] = useState(null);
   const [enterpriseInquiries, setEnterpriseInquiries] = useState([]);
   const [enterpriseUsers, setEnterpriseUsers] = useState([]);
@@ -73,19 +140,26 @@ export default function Dashboard() {
     dias: 120,
     ultima: 190,
     obsEmpresa: 300,
-    obsRfa: 300,
     accion: 160
   });
   const [showNewCaseForm, setShowNewCaseForm] = useState(true);
   const [publicCaseCode, setPublicCaseCode] = useState("");
   const [adminNote, setAdminNote] = useState("");
+  const [adminPublicMessage, setAdminPublicMessage] = useState("");
   const [adminStatus, setAdminStatus] = useState("");
   const [adminPriority, setAdminPriority] = useState("");
   const [adminRisk, setAdminRisk] = useState("");
+  const [adminServiceCode, setAdminServiceCode] = useState("");
+  const [adminQuotedAmount, setAdminQuotedAmount] = useState("");
+  const [adminQuotedScope, setAdminQuotedScope] = useState("");
+  const [adminCommercialStatus, setAdminCommercialStatus] = useState("");
+  const [adminSaveNotice, setAdminSaveNotice] = useState("");
   const [adminCaseSourceFilter, setAdminCaseSourceFilter] = useState("todos");
+  const [adminListFilter, setAdminListFilter] = useState("all");
   const [adminEnterpriseFilter, setAdminEnterpriseFilter] = useState("");
   const [adminOnlyUnclassified, setAdminOnlyUnclassified] = useState(false);
   const [filterStatus, setFilterStatus] = useState("");
+  const [filterPriority, setFilterPriority] = useState("");
   const [filterPlan, setFilterPlan] = useState("");
   const [filterMoneda, setFilterMoneda] = useState("");
   const [filterEntidad, setFilterEntidad] = useState("");
@@ -95,18 +169,12 @@ export default function Dashboard() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [downloadingReceiptCaseId, setDownloadingReceiptCaseId] = useState(null);
+  const [showAdminAdvancedFilters, setShowAdminAdvancedFilters] = useState(false);
+  const [adminImportOpen, setAdminImportOpen] = useState(false);
+  const loadRequestRef = useRef(null);
+  const loadRequestIdRef = useRef(0);
 
-  const statusOptions = [
-    "Recibido",
-    "En análisis",
-    "Documentación solicitada",
-    "Viable (pendiente de pago)",
-    "No viable",
-    "Presentado ante entidad",
-    "En espera de respuesta",
-    "Respuesta recibida",
-    "Cerrado"
-  ];
+  const statusOptions = operationalStatusOptions;
   const enterpriseStatusOptions = ["Pendiente", "En análisis", "Respondido", "Cerrado"];
   const priorityOptions = ["Pendiente", "Baja", "Media", "Alta", "Crítica"];
   const riskOptions = ["Bajo", "Medio", "Alto", "Crítico"];
@@ -118,43 +186,17 @@ export default function Dashboard() {
   ];
 
   const statusTemplates = {
-    "Recibido": "Caso recibido correctamente. En breve iniciamos el análisis.",
-    "En análisis": "Estamos revisando la documentación y el relato para determinar la viabilidad.",
-    "Documentación solicitada": "Te solicitamos documentación adicional para avanzar con el reclamo.",
-    "Viable (pendiente de pago)":
-      "Tu caso es viable. Te enviamos una carpeta demo. Para continuar, te recomendamos Plan Gestión Básica o Plan Completo.",
-    "No viable": "Luego de analizar la información, el caso no resulta viable por el momento.",
-    "Presentado ante entidad": "Reclamo presentado formalmente ante la entidad. Seguimos el proceso.",
-    "En espera de respuesta": "El reclamo ya fue enviado. Estamos esperando respuesta de la entidad.",
-    "Respuesta recibida": "Recibimos respuesta de la entidad. Te informaremos los próximos pasos.",
-    "Cerrado": "El caso fue cerrado. Si necesitás continuar, contactanos."
-  };
-
-  const normalizePlanName = (value = "") =>
-    value
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toLowerCase();
-
-  const findPlanByName = (planName = "") => {
-    const normalized = normalizePlanName(planName);
-    if (!normalized) return null;
-    return plans.find((plan) => {
-      const planNameNormalized = normalizePlanName(plan.name);
-      return normalized === planNameNormalized || normalized.includes(plan.id);
-    }) || null;
-  };
-
-  const BANK_TRANSFER = {
-    titular: "Matias Hernan Masdeu",
-    banco: "Banco Supervielle",
-    cbu: "0270053320052964280015",
-    alias: "MATIASHERNAN.M",
-    referencia: "Indica tu email y plan elegido en el comprobante"
+    received: "Caso recibido correctamente. En breve iniciamos el análisis.",
+    in_analysis: "Estamos revisando la información y la documentación disponible.",
+    needs_information: "Necesitamos información o documentación adicional para continuar.",
+    in_progress: "El caso se encuentra en gestión administrativa.",
+    completed: "La gestión administrativa fue finalizada.",
+    referred: "El caso requiere continuar por otra vía. Te informaremos los próximos pasos.",
+    not_applicable: "Con la información disponible, RFA no puede intervenir en este caso."
   };
   const isNewCase = (c) => {
     if (!c) return false;
-    return c.estado === "Recibido";
+    return c.estado === "received" || c.estado === "Recibido";
   };
 
   const educationPosts = [
@@ -163,7 +205,7 @@ export default function Dashboard() {
       id: "bloqueo-cuenta",
       title: "¿Te bloquearon la cuenta o billetera",
       category: "Bancos y billeteras",
-      excerpt: "Guardá capturas, comprobantes y fechas. El primer reclamo formal define buena parte del resultado.",
+      excerpt: "Guardá capturas, comprobantes y fechas. El primer reclamo formal deja un antecedente claro para el seguimiento.",
       checklist: ["Captura del error o bloqueo", "Últimos movimientos", "Reclamo inicial por escrito"]
     },
     {
@@ -186,22 +228,34 @@ export default function Dashboard() {
   const isEnterprise = user?.role === "enterprise";
   const isRfaUser = user?.role === "user";
   const showNewClaimSection = isPublicCreateMode || isRfaUser;
+
+  useEffect(() => {
+    if (user?.email) setEmailContacto((current) => current || user.email);
+  }, [user?.email]);
   const hasUnsavedChanges = useMemo(() => {
     const hasDraftMap = (obj) => obj && Object.keys(obj).length > 0;
     return (
       hasDraftMap(enterpriseStatusDrafts) ||
       hasDraftMap(enterprisePriorityDrafts) ||
       hasDraftMap(enterpriseInternalNotesDrafts) ||
-      Boolean(adminNote || adminStatus || adminPriority || adminRisk)
+      Boolean(
+        adminNote || adminPublicMessage || adminStatus || adminPriority || adminRisk || adminServiceCode ||
+        adminQuotedAmount || adminQuotedScope || adminCommercialStatus
+      )
     );
   }, [
     enterpriseStatusDrafts,
     enterprisePriorityDrafts,
     enterpriseInternalNotesDrafts,
     adminNote,
+    adminPublicMessage,
     adminStatus,
     adminPriority,
-    adminRisk
+    adminRisk,
+    adminServiceCode,
+    adminQuotedAmount,
+    adminQuotedScope,
+    adminCommercialStatus
   ]);
   const casesById = useMemo(() => {
     const map = new Map();
@@ -210,27 +264,56 @@ export default function Dashboard() {
     });
     return map;
   }, [cases]);
-  const activeCases = useMemo(
-    () => cases.filter((c) => c.estado !== "Cerrado"),
-    [cases]
-  );
-  const hasActiveCase = activeCases.length > 0;
-  const hasMultipleCasesPlan = cases.some((c) => {
-    const plan = (c.plan_elegido || "")
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toLowerCase();
-    return plan.includes("plan completo");
-  });
-  const canCreateCase = !hasActiveCase || hasMultipleCasesPlan;
-  const canSubmitCase = isPublicCreateMode ? true : canCreateCase;
+
+  function isAdminClosedCase(caseItem) {
+    const status = normalizeCompare(getOperationalStatusLabel(caseItem?.estado));
+    return status === "finalizado" || status === "cerrado" || status === "no corresponde";
+  }
+
+  function isAdminAttentionCase(caseItem) {
+    const priority = normalizeCompare(caseItem?.prioridad);
+    const risk = normalizeCompare(caseItem?.riesgo);
+    return ["alta", "critica", "alto", "critico"].includes(priority) || ["alto", "critico"].includes(risk);
+  }
+
+  function isAdminDocumentationPendingCase(caseItem) {
+    const status = normalizeCompare(getOperationalStatusLabel(caseItem?.estado));
+    const documentation = normalizeCompare(caseItem?.documentacion_estado);
+    const normalizedDocumentation = documentation === "completa"
+      ? "completa"
+      : ["incompleta", "parcial"].includes(documentation)
+        ? "parcial"
+        : "sin documentacion";
+    return status === "falta informacion" || ["parcial", "incompleta", "sin documentacion"].includes(normalizedDocumentation);
+  }
+
+  // La carga de casos ya no depende del nombre de un plan comercial.
+  const canSubmitCase = true;
+  const serviceFilterOptions = useMemo(() => {
+    const options = [
+      { value: analysisService.code, label: `${analysisService.name} (sin costo)` },
+      { value: "Primer contacto (sin cargo)", label: "Primer contacto (sin cargo)" },
+      ...plans.map((service) => ({ value: service.code, label: service.name })),
+      ...historicalPlans.map((service) => ({ value: service.name, label: `${service.name} (histórico)` }))
+    ];
+    const seen = new Set(options.map((option) => option.value));
+    (cases || []).forEach((caseItem) => {
+      const value = getCaseServiceValue(caseItem);
+      if (value && !seen.has(value)) {
+        options.push({ value, label: getServiceDisplayName(value) || value });
+        seen.add(value);
+      }
+    });
+    return options;
+  }, [cases]);
 
   const adminFilteredCases = useMemo(() => {
     if (!isAdmin) return cases;
     const query = searchQuery.trim().toLowerCase();
     return cases.filter((c) => {
       const matchStatus = !filterStatus || c.estado === filterStatus;
-      const matchPlan = !filterPlan || c.plan_elegido === filterPlan;
+      const matchPriority = !filterPriority || normalizeCompare(c.prioridad) === normalizeCompare(filterPriority);
+      const matchPlan = !filterPlan || getCaseServiceValue(c) === filterPlan;
       const matchMoneda = !filterMoneda || c.monto_moneda === filterMoneda;
       const entidadText = (c.entidad || "").toLowerCase();
       const matchEntidad = !filterEntidad || entidadText.includes(filterEntidad.toLowerCase());
@@ -245,15 +328,24 @@ export default function Dashboard() {
       const caseRisk = normalizeRiskValue(c.riesgo);
       const isUnclassifiedRisk = !caseRisk || caseRisk === "Pendiente";
       const matchUnclassified = !adminOnlyUnclassified || isUnclassifiedRisk;
+      const matchListFilter =
+        adminListFilter === "all" ||
+        (adminListFilter === "active" && !isAdminClosedCase(c)) ||
+        (adminListFilter === "attention" && isAdminAttentionCase(c)) ||
+        (adminListFilter === "documentation" && isAdminDocumentationPendingCase(c)) ||
+        (adminListFilter === "closed" && isAdminClosedCase(c)) ||
+        (adminListFilter === "new" && isNewAdminCase(c));
       if (!query) {
         return (
           matchStatus &&
+          matchPriority &&
           matchPlan &&
           matchMoneda &&
           matchEntidad &&
           matchSource &&
           matchEnterprise &&
-          matchUnclassified
+          matchUnclassified &&
+          matchListFilter
         );
       }
       const haystack = [
@@ -266,7 +358,8 @@ export default function Dashboard() {
         c.tipo_entidad,
         c.user_email,
         c.estado,
-        c.plan_elegido
+        getCaseServiceValue(c),
+        c.commercial_status
       ]
         .filter(Boolean)
         .join(" ")
@@ -274,23 +367,27 @@ export default function Dashboard() {
       const matchSearch = haystack.includes(query);
       return (
         matchStatus &&
+        matchPriority &&
         matchPlan &&
         matchMoneda &&
         matchEntidad &&
         matchSource &&
         matchEnterprise &&
         matchUnclassified &&
+        matchListFilter &&
         matchSearch
       );
     });
   }, [
     cases,
     filterStatus,
+    filterPriority,
     filterPlan,
     filterMoneda,
     filterEntidad,
     searchQuery,
     adminCaseSourceFilter,
+    adminListFilter,
     adminEnterpriseFilter,
     adminOnlyUnclassified,
     isAdmin
@@ -304,8 +401,8 @@ export default function Dashboard() {
       const aClosed = String(a?.estado || "").trim().toLowerCase() === "cerrado";
       const bClosed = String(b?.estado || "").trim().toLowerCase() === "cerrado";
       if (aClosed !== bClosed) return aClosed ? 1 : -1;
-      const va = a[sortKey] ?? "";
-      const vb = b[sortKey] ?? "";
+      const va = sortKey === "service_code" ? getCaseServiceValue(a) : a[sortKey] ?? "";
+      const vb = sortKey === "service_code" ? getCaseServiceValue(b) : b[sortKey] ?? "";
       if (sortKey.includes("at")) {
         return (new Date(va).getTime() - new Date(vb).getTime()) * dir;
       }
@@ -362,25 +459,15 @@ export default function Dashboard() {
     });
   }, [cases, enterpriseSearchQuery, enterpriseFilterStatus, enterpriseFilterPriority, isEnterprise]);
 
-  const getMontoBadge = (moneda, escala) => {
-    if (!moneda || !escala) return { label: "Monto sin clasificar", className: "bg-white/10 text-slate-300" };
-    const key = `${moneda}-${escala}`.toLowerCase();
-    const map = {
-      "ars-cientos": "bg-slate-700/50 text-slate-200",
-      "ars-miles": "bg-emerald-600/30 text-emerald-200",
-      "ars-millones": "bg-emerald-500/60 text-emerald-100",
-      "usd-cientos": "bg-sky-600/30 text-sky-200",
-      "usd-miles": "bg-sky-500/50 text-sky-100",
-      "usd-millones": "bg-sky-500/70 text-white"
-    };
-    return {
-      label: `${moneda} · ${escala}`,
-      className: map[key] || "bg-white/10 text-slate-300"
-    };
-  };
-
   const getStatusBadge = (status) => {
     const map = {
+      received: "bg-slate-600/40 text-slate-200",
+      in_analysis: "bg-sky-500/30 text-sky-200",
+      needs_information: "bg-amber-500/30 text-amber-200",
+      in_progress: "bg-blue-500/30 text-blue-200",
+      completed: "bg-emerald-500/40 text-emerald-100",
+      referred: "bg-violet-500/30 text-violet-200",
+      not_applicable: "bg-rose-500/30 text-rose-200",
       "Recibido": "bg-slate-600/40 text-slate-200",
       "En análisis": "bg-sky-500/30 text-sky-200",
       "Documentación solicitada": "bg-amber-500/30 text-amber-200",
@@ -476,6 +563,17 @@ export default function Dashboard() {
     return "Sin documentación";
   };
 
+  const adminSummary = useMemo(() => {
+    if (!isAdmin) return [];
+    return [
+      { label: "Activos", value: cases.filter((caseItem) => !isAdminClosedCase(caseItem)).length, tone: "blue", filter: "active" },
+      { label: "Requieren atención", value: cases.filter(isAdminAttentionCase).length, tone: "amber", filter: "attention" },
+      { label: "Documentación pendiente", value: cases.filter(isAdminDocumentationPendingCase).length, tone: "gold", filter: "documentation" },
+      { label: "Cerrados", value: cases.filter(isAdminClosedCase).length, tone: "slate", filter: "closed" },
+      { label: "Nuevos", value: cases.filter(isNewAdminCase).length, tone: "blue", filter: "new", source: "rfa" }
+    ];
+  }, [cases, isAdmin]);
+
   function normalizeCompare(value) {
     return String(value || "")
       .replace(/Ã¡/g, "a")
@@ -519,10 +617,15 @@ export default function Dashboard() {
         setLoading(false);
         return;
       }
-      navigate("/login");
-      return;
+      // El access token puede no estar disponible tras una recarga; /me
+      // permite que apiRequest restaure la sesión mediante refresh-token.
+      loadCases();
+    } else {
+      loadCases();
     }
-    loadCases();
+    return () => {
+      loadRequestRef.current?.controller.abort();
+    };
   }, [token, isPublicCreateMode, navigate]);
 
   useEffect(() => {
@@ -550,11 +653,13 @@ export default function Dashboard() {
     try {
       const saved = JSON.parse(raw);
       setFilterStatus(saved.filterStatus || "");
+      setFilterPriority(saved.filterPriority || "");
       setFilterPlan(saved.filterPlan || "");
       setFilterMoneda(saved.filterMoneda || "");
       setFilterEntidad(saved.filterEntidad || "");
       setSearchQuery(saved.searchQuery || "");
       setAdminCaseSourceFilter(saved.adminCaseSourceFilter || "todos");
+      setAdminListFilter(saved.adminListFilter || "all");
       setAdminEnterpriseFilter(saved.adminEnterpriseFilter || "");
       setAdminOnlyUnclassified(Boolean(saved.adminOnlyUnclassified));
       setSortKey(saved.sortKey || "created_at");
@@ -570,6 +675,7 @@ export default function Dashboard() {
     if (page !== 1) setPage(1);
   }, [
     filterStatus,
+    filterPriority,
     filterPlan,
     filterMoneda,
     filterEntidad,
@@ -590,18 +696,39 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!isAdmin || !expandedCaseId) return;
-    const selectedCase = cases.find((item) => item.id === expandedCaseId);
-    if (!selectedCase) return;
-    setAdminRisk(normalizeRiskValue(selectedCase.riesgo));
-  }, [expandedCaseId, cases, isAdmin]);
+    setAdminNote("");
+    setAdminPublicMessage("");
+    setAdminStatus("");
+    setAdminPriority("");
+    setAdminRisk("");
+    setAdminServiceCode("");
+    setAdminQuotedAmount("");
+    setAdminQuotedScope("");
+    setAdminCommercialStatus("");
+    setAdminSaveNotice("");
+  }, [expandedCaseId, isAdmin]);
 
   const loadCases = async () => {
+    loadRequestRef.current?.controller.abort();
+    const request = {
+      id: ++loadRequestIdRef.current,
+      controller: new AbortController(),
+      timedOut: false
+    };
+    loadRequestRef.current = request;
+    const timeoutId = window.setTimeout(() => {
+      request.timedOut = true;
+      request.controller.abort();
+    }, 15000);
     setLoading(true);
     setError("");
     try {
-      const me = await apiRequest("/me");
+      const requestOptions = { signal: request.controller.signal };
+      const me = await apiRequest("/me", requestOptions);
+      if (loadRequestRef.current?.id !== request.id) return;
       setUser(me);
-      const data = await apiRequest("/cases");
+      const data = await apiRequest("/cases", requestOptions);
+      if (loadRequestRef.current?.id !== request.id) return;
       const orderedCases = [...(data || [])].sort((a, b) => {
         const aClosed = String(a?.estado || "").trim().toLowerCase() === "cerrado";
         const bClosed = String(b?.estado || "").trim().toLowerCase() === "cerrado";
@@ -610,12 +737,15 @@ export default function Dashboard() {
       });
       setCases(orderedCases);
       if (me.role === "admin") {
-        const inquiries = await apiRequest("/enterprise");
+        const inquiries = await apiRequest("/enterprise", requestOptions);
+        if (loadRequestRef.current?.id !== request.id) return;
         setEnterpriseInquiries(inquiries || []);
-        const enterpriseUsersData = await apiRequest("/enterprise-users");
+        const enterpriseUsersData = await apiRequest("/enterprise-users", requestOptions);
+        if (loadRequestRef.current?.id !== request.id) return;
         setEnterpriseUsers(enterpriseUsersData || []);
       } else if (me.role === "enterprise") {
-        const retentionConfig = await apiRequest("/enterprise-retention");
+        const retentionConfig = await apiRequest("/enterprise-retention", requestOptions);
+        if (loadRequestRef.current?.id !== request.id) return;
         const mode = retentionConfig?.retention_mode;
         const days = Number(retentionConfig?.retention_days || 0);
         if (mode === "auto" && [30, 60, 90].includes(days)) {
@@ -626,9 +756,24 @@ export default function Dashboard() {
         setEnterpriseRetentionSaved(retentionConfig || null);
       }
     } catch (err) {
-      setError(err.message);
+      if (loadRequestRef.current?.id !== request.id) return;
+      if (request.timedOut) {
+        setError("No se pudo cargar el panel. El servidor no respondió a tiempo. Reintentá.");
+      } else if (err.name === "AbortError") {
+        return;
+      } else if (err.status === 401 || err.status === 403) {
+        clearToken();
+        setUser(null);
+        navigate("/login", { replace: true });
+      } else {
+        setError(err.message || "No se pudieron cargar los casos.");
+      }
     } finally {
-      setLoading(false);
+      window.clearTimeout(timeoutId);
+      if (loadRequestRef.current?.id === request.id) {
+        loadRequestRef.current = null;
+        setLoading(false);
+      }
     }
   };
 
@@ -651,10 +796,6 @@ export default function Dashboard() {
     } catch {
       return [];
     }
-  };
-
-  const handleToggleCaseDetails = (caseId) => {
-    setExpandedCaseDetailId((prev) => (prev === caseId ? null : caseId));
   };
 
   const handleToggleEnterpriseCaseDetails = async (caseId) => {
@@ -715,11 +856,13 @@ export default function Dashboard() {
   const saveFilters = () => {
     const payload = {
       filterStatus,
+      filterPriority,
       filterPlan,
       filterMoneda,
       filterEntidad,
       searchQuery,
       adminCaseSourceFilter,
+      adminListFilter,
       adminEnterpriseFilter,
       adminOnlyUnclassified,
       sortKey,
@@ -731,13 +874,39 @@ export default function Dashboard() {
 
   const clearFilters = () => {
     setFilterStatus("");
+    setFilterPriority("");
     setFilterPlan("");
     setFilterMoneda("");
     setFilterEntidad("");
     setSearchQuery("");
     setAdminCaseSourceFilter("todos");
+    setAdminListFilter("all");
     setAdminEnterpriseFilter("");
     setAdminOnlyUnclassified(false);
+  };
+
+  const handleAdminListFilter = (filter, source = "todos") => {
+    setAdminListFilter(filter);
+    setAdminCaseSourceFilter(source);
+    setPage(1);
+  };
+
+  const generatePublicActionLink = async (caseId, action) => {
+    setCreatingPublicActionLink(true);
+    setError("");
+    setPublicActionLink(null);
+    try {
+      const result = await apiRequest(`/admin/cases/${encodeURIComponent(caseId)}/public-action-token`, {
+        method: "POST",
+        body: JSON.stringify({ action })
+      });
+      setPublicActionLink({ caseId, url: result.url, expiresAt: result.expires_at });
+      try { await navigator.clipboard.writeText(result.url); } catch { /* link remains selectable below */ }
+    } catch (err) {
+      setError(err.message || "No se pudo generar el enlace seguro.");
+    } finally {
+      setCreatingPublicActionLink(false);
+    }
   };
 
   const exportCsv = () => {
@@ -749,7 +918,7 @@ export default function Dashboard() {
       "Cliente",
       "Email",
       "Entidad",
-      "Plan",
+      "Servicio",
       "Estado",
       "Prioridad",
       "Moneda",
@@ -757,10 +926,6 @@ export default function Dashboard() {
       "Monto",
       "Creado"
     ];
-    const escapeCell = (value) => {
-      const str = String(value ?? "");
-      return `"${str.replace(/"/g, '""')}"`;
-    };
     const rows = sortedCases.map((c) => [
       c.id,
       c.case_code || "",
@@ -768,7 +933,7 @@ export default function Dashboard() {
       c.nombre_completo || "",
       getCaseContactEmail(c) || "",
       c.entidad || "",
-      c.plan_elegido || "",
+      getServiceDisplayName(getCaseServiceValue(c)) || "",
       c.estado || "",
       c.prioridad || "",
       c.monto_moneda || "",
@@ -776,7 +941,7 @@ export default function Dashboard() {
       c.monto_valor || "",
       c.created_at || ""
     ]);
-    const csvBody = [headers, ...rows].map((row) => row.map(escapeCell).join(",")).join("\r\n");
+    const csvBody = [headers, ...rows].map((row) => row.map(escapeCsvCell).join(",")).join("\r\n");
     // BOM + "sep=," mejora compatibilidad con Excel/Sheets y evita problemas de tildes.
     const csv = `\uFEFFsep=,\r\n${csvBody}`;
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -831,12 +996,8 @@ export default function Dashboard() {
 
   const handleCreateCase = async (event) => {
     event.preventDefault();
-    if (!canSubmitCase) {
-      setError("Solo podés cargar un nuevo reclamo si tenés Plan Completo.");
-      return;
-    }
-    if (!String(emailContacto || "").trim() && !String(dniCuit || "").trim()) {
-      setError("Debes completar email o DNI/CUIT para poder consultar el caso luego.");
+    if (!String(emailContacto || "").trim()) {
+      setError("Debes completar tu correo electrónico para poder consultar el caso luego.");
       return;
     }
     setSubmitting(true);
@@ -854,10 +1015,10 @@ export default function Dashboard() {
       formData.append("monto_valor", montoValor);
       formData.append("monto_escala", montoEscala);
       formData.append("monto_moneda", montoMoneda);
-      formData.append("plan_elegido", planElegido);
-      formData.append("medios_pago", JSON.stringify(mediosPago));
       formData.append("relato", relato);
       formData.append("autorizacion", autorizacion ? "true" : "false");
+      formData.append("acepta_terminos", aceptaTerminos ? "true" : "false");
+      formData.append("acepta_privacidad", aceptaPrivacidad ? "true" : "false");
       Array.from(adjuntos || []).forEach((file) => formData.append("adjuntos", file));
 
       const endpoint = isPublicCreateMode ? "/public/cases" : "/cases";
@@ -874,11 +1035,11 @@ export default function Dashboard() {
       setTipoEntidad("");
       setMontoValor("");
       setMontoEscala("");
-      setMontoMoneda("");
-      setPlanElegido("");
-      setMediosPago([]);
+      setMontoMoneda("ARS");
       setRelato("");
       setAutorizacion(false);
+      setAceptaTerminos(false);
+      setAceptaPrivacidad(false);
       setAdjuntos([]);
       if (isPublicCreateMode) {
         setPublicCaseCode(created?.case_code || "");
@@ -932,13 +1093,13 @@ export default function Dashboard() {
 
   const handleImportFileChange = (event) => {
     const files = Array.from(event.target.files || []);
-    const allowedExt = [".csv", ".xlsx", ".xls", ".ods"];
+    const allowedExt = [".csv", ".xlsx"];
     const accepted = files.filter((file) => {
       const name = String(file.name || "").toLowerCase();
       return allowedExt.some((ext) => name.endsWith(ext));
     });
     if (accepted.length !== files.length) {
-      setError("Algunos archivos fueron omitidos. Formatos permitidos: CSV, XLSX, XLS, ODS.");
+      setError("Algunos archivos fueron omitidos. Formatos permitidos: CSV y XLSX.");
     } else {
       setError("");
     }
@@ -1018,7 +1179,7 @@ export default function Dashboard() {
     setError("");
     try {
       const payload = {
-        mensaje: "Actualizaci?n interna de empresa.",
+        mensaje: "Actualización interna de empresa.",
         estado: toEnterpriseStatus(nextStatus ?? caseItem.estado ?? "Pendiente"),
         prioridad: toEnterprisePriority(nextPriority ?? caseItem.prioridad ?? "Pendiente"),
         observaciones_empresa: nextInternalNotes ?? caseItem.observaciones_empresa ?? ""
@@ -1104,15 +1265,20 @@ export default function Dashboard() {
         setEnterpriseInternalNotesDrafts({});
       }
 
-      if (isAdmin && expandedCaseId && (adminNote || adminStatus || adminPriority || adminRisk)) {
+      if (isAdmin && expandedCaseId && hasUnsavedChanges) {
         await apiRequest(`/cases/${expandedCaseId}/updates`, {
           method: "POST",
           body: JSON.stringify(buildAdminUpdatePayload())
         });
         setAdminNote("");
+        setAdminPublicMessage("");
         setAdminStatus("");
         setAdminPriority("");
         setAdminRisk("");
+        setAdminServiceCode("");
+        setAdminQuotedAmount("");
+        setAdminQuotedScope("");
+        setAdminCommercialStatus("");
       }
 
       await loadCases();
@@ -1124,18 +1290,43 @@ export default function Dashboard() {
   };
 
   const handleToggleUpdates = async (caseId) => {
+    if (isAdmin && hasUnsavedChanges) {
+      setError("Guardá los cambios del caso abierto antes de cerrar o gestionar otro caso.");
+      return;
+    }
     if (expandedCaseId === caseId) {
       setExpandedCaseId(null);
       return;
     }
+    if (isAdmin) {
+      setAdminNote("");
+      setAdminPublicMessage("");
+      setAdminStatus("");
+      setAdminPriority("");
+      setAdminRisk("");
+      setAdminServiceCode("");
+      setAdminQuotedAmount("");
+      setAdminQuotedScope("");
+      setAdminCommercialStatus("");
+      setAdminSaveNotice("");
+    }
+    setError("");
+    setAdminDetailTab("summary");
     setExpandedCaseId(caseId);
-    if (!updates[caseId]) {
-      try {
-        const data = await apiRequest(`/cases/${caseId}/updates`);
-        setUpdates((prev) => ({ ...prev, [caseId]: data || [] }));
-      } catch (err) {
-        setError(err.message);
+    try {
+      const caseRequest = isAdmin ? apiRequest(`/cases/${caseId}`) : Promise.resolve(null);
+      const updatesRequest = updates[caseId]
+        ? Promise.resolve(updates[caseId])
+        : apiRequest(`/cases/${caseId}/updates`);
+      const [caseData, updatesData] = await Promise.all([caseRequest, updatesRequest]);
+      if (caseData) {
+        setCases((prev) => prev.map((item) => item.id === caseId ? { ...item, ...caseData } : item));
       }
+      if (!updates[caseId]) {
+        setUpdates((prev) => ({ ...prev, [caseId]: updatesData || [] }));
+      }
+    } catch (err) {
+      setError(err.message || "No se pudo abrir el expediente.");
     }
   };
 
@@ -1147,20 +1338,33 @@ export default function Dashboard() {
   const handleAdminUpdate = async (caseId) => {
     setSubmitting(true);
     setError("");
+    setAdminSaveNotice("");
     try {
-      await apiRequest(`/cases/${caseId}/updates`, {
+      const result = await apiRequest(`/cases/${caseId}/updates`, {
         method: "POST",
         body: JSON.stringify(buildAdminUpdatePayload())
       });
       setAdminNote("");
+      setAdminPublicMessage("");
       setAdminStatus("");
       setAdminPriority("");
       setAdminRisk("");
-      const data = await apiRequest(`/cases/${caseId}/updates`);
-      setUpdates((prev) => ({ ...prev, [caseId]: data || [] }));
-      await loadCases();
+      setAdminServiceCode("");
+      setAdminQuotedAmount("");
+      setAdminQuotedScope("");
+      setAdminCommercialStatus("");
+      if (result?.case) {
+        setCases((prev) => prev.map((item) => item.id === caseId ? { ...item, ...result.case } : item));
+      }
+      if (result?.update) {
+        setUpdates((prev) => ({
+          ...prev,
+          [caseId]: [result.update, ...(prev[caseId] || [])]
+        }));
+      }
+      setAdminSaveNotice("Cambios guardados correctamente.");
     } catch (err) {
-      setError(err.message);
+      setError(err.message || "No se pudieron guardar los cambios.");
     } finally {
       setSubmitting(false);
     }
@@ -1206,169 +1410,441 @@ export default function Dashboard() {
   };
 
   const buildAdminUpdatePayload = () => {
-    const adminComment = String(adminNote || "").trim();
-    const hasClassificationChanges = Boolean(adminStatus || adminPriority || adminRisk);
-    const fallbackMessage = hasClassificationChanges
-      ? "Actualización de clasificación interna RFA."
-      : "Actualización interna RFA.";
-    return {
-      mensaje: adminComment || fallbackMessage,
+    const publicMessage = String(adminPublicMessage || "").trim();
+    const payload = {
+      mensaje: publicMessage || undefined,
+      message_visibility: publicMessage ? "public" : "rfa_internal",
       estado: adminStatus || null,
       prioridad: adminPriority || null,
       riesgo: adminRisk || null,
-      observaciones_rfa: adminComment || null
+      observaciones_rfa: adminNote !== "" ? adminNote : undefined,
+      service_code: adminServiceCode || undefined,
+      quoted_amount: adminQuotedAmount !== "" ? adminQuotedAmount : undefined,
+      quoted_scope: adminQuotedScope !== "" ? adminQuotedScope : undefined,
+      commercial_status: adminCommercialStatus || undefined,
+      quoted_currency: adminServiceCode || adminQuotedAmount || adminQuotedScope || adminCommercialStatus ? "ARS" : undefined
     };
+    return payload;
   };
 
-  const renderAdminManagementPanel = (c) => (
-    <div className="bg-white/10 border border-white/10 rounded-2xl p-5 space-y-3">
-      <h3 className="text-lg font-semibold">Gestión del caso</h3>
-      <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-        <h4 className="text-sm font-semibold text-slate-200 mb-3">Analisis del caso</h4>
-        <div className="grid md:grid-cols-2 gap-3 text-sm text-slate-300">
-          <div><span className="text-slate-400">Empresa:</span> {c.enterprise_email || c.empresa || "RFA directo"}</div>
-          <div><span className="text-slate-400">Codigo:</span> {c.case_code || "-"}</div>
-          <div><span className="text-slate-400">Cliente:</span> {c.nombre_completo || "-"}</div>
-          <div><span className="text-slate-400">DNI/CUIT:</span> {c.dni_cuit || "-"}</div>
-          <div><span className="text-slate-400">Email:</span> {getCaseContactEmail(c) || "-"}</div>
-          <div><span className="text-slate-400">Entidad:</span> {c.entidad || "-"}</div>
-          <div><span className="text-slate-400">Estado actual:</span> {c.estado || "-"}</div>
-          <div><span className="text-slate-400">Prioridad actual:</span> {c.prioridad || "Pendiente"}</div>
-          <div><span className="text-slate-400">Riesgo actual:</span> {normalizeRiskValue(c.riesgo) || "Sin clasificar"}</div>
-          <div><span className="text-slate-400">Documentacion:</span> {c.documentacion_estado || "-"}</div>
-          <div className="md:col-span-2">
-            <span className="text-slate-400">Reclamo completo:</span>
-            <p className="mt-1 whitespace-pre-wrap leading-relaxed text-slate-200">{c.relato || c.detalle || "-"}</p>
+  const renderAdminManagementPanel = (c) => {
+    const isEnterpriseCase = Boolean(c.enterprise_user_id);
+    const currentService = getCaseServiceValue(c) || analysisService.code;
+    const currentCommercialStatus = getEffectiveCommercialStatus(c);
+    const attachments = parseArray(c.adjuntos);
+
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-[0.18em] text-amber-200">Expediente</p>
+            <h3 className="text-xl font-semibold">{c.case_code || c.id}</h3>
           </div>
+          <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-slate-200">
+            {isEnterpriseCase ? "Caso empresa" : "Caso particular"}
+          </span>
         </div>
-      </div>
-      {(updates[c.id] || []).length === 0 && (
-        <p className="text-slate-300 text-sm">Aún no hay actualizaciones.</p>
-      )}
-      {(updates[c.id] || []).map((u) => (
-        <div key={u.id} className="border border-white/10 rounded-xl p-3">
-          <p className="text-sm text-slate-200">{u.mensaje}</p>
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-400">
-            {u.estado && (
-              <span className={`inline-flex px-2 py-0.5 rounded-full ${getStatusBadge(u.estado)}`}>
-                {u.estado}
-              </span>
-            )}
-            <span>
-              {u.author_email ? `Actualizado por ${u.author_email}` : "Actualización registrada"}
-            </span>
-            <span>{formatDateAr(u.created_at)}</span>
+
+        <section className="rounded-xl border border-white/10 bg-white/5 p-4">
+          <h4 className="mb-3 text-sm font-semibold text-amber-100">A. Resumen</h4>
+          <div className="grid gap-3 text-sm text-slate-300 md:grid-cols-3">
+            <div><span className="text-slate-500">Cliente</span><p className="text-slate-100">{c.nombre_completo || "-"}</p></div>
+            <div><span className="text-slate-500">DNI/CUIT</span><p className="text-slate-100">{c.dni_cuit || "-"}</p></div>
+            <div><span className="text-slate-500">Contacto</span><p className="text-slate-100 break-all">{getCaseContactEmail(c) || c.telefono || "-"}</p></div>
+            <div><span className="text-slate-500">Empresa reclamada</span><p className="text-slate-100">{c.entidad || "-"}</p></div>
+            <div><span className="text-slate-500">Categoría</span><p className="text-slate-100">{c.categoria || "-"}</p></div>
+            <div><span className="text-slate-500">Ingreso</span><p className="text-slate-100">{formatDateTimeAr(c.created_at)}</p></div>
+            <div className="md:col-span-3"><span className="text-slate-500">Descripción completa</span><p className="mt-1 whitespace-pre-wrap leading-relaxed text-slate-100">{c.relato || c.detalle || "-"}</p></div>
           </div>
-        </div>
-      ))}
-      {c.estado === "Viable (pendiente de pago)" && c.plan_elegido && findPlanByName(c.plan_elegido) && (
-        <div className="border border-white/10 rounded-xl p-4 bg-white/5">
-          <p className="text-sm text-slate-300 mb-3">Caso viable. Enviar pago al cliente:</p>
-          <div className="flex flex-wrap gap-3">
-            <Button
-              className="bg-emerald-500 hover:bg-emerald-600 text-white"
-              onClick={() => setTransferPlanId((prev) => (prev === c.id ? null : c.id))}
-            >
-              Contratar plan
-            </Button>
-            <Button
-              className="bg-slate-900 hover:bg-slate-800 text-white"
-              onClick={() => setInfoPlanId((prev) => (prev === c.id ? null : c.id))}
-            >
-              Mas informacion
-            </Button>
-          </div>
-          {transferPlanId === c.id && (
-            <div className="mt-3 rounded-lg border border-emerald-400/30 bg-emerald-500/10 p-3 text-xs text-emerald-100 space-y-1">
-              <p><strong>Titular:</strong> {BANK_TRANSFER.titular}</p>
-              <p><strong>Banco:</strong> {BANK_TRANSFER.banco}</p>
-              <p><strong>CBU:</strong> {BANK_TRANSFER.cbu}</p>
-              <p><strong>Alias:</strong> {BANK_TRANSFER.alias}</p>
-              <p className="text-emerald-200/90">{BANK_TRANSFER.referencia}</p>
+        </section>
+
+        <section className="rounded-xl border border-white/10 bg-white/5 p-4">
+          <h4 className="mb-3 text-sm font-semibold text-amber-100">B. Documentación</h4>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="space-y-2">
+              {attachments.length === 0 && <p className="text-sm text-slate-400">Sin archivos adjuntos.</p>}
+              {attachments.map((file) => (
+                <div key={file.filename || file.originalName} className="flex items-center justify-between gap-3 rounded-lg border border-white/10 px-3 py-2">
+                  <span className="truncate text-xs text-slate-200">{file.originalName || file.filename}</span>
+                  <Button className="h-auto bg-white/10 px-2 py-1 text-xs text-white hover:bg-white/20" onClick={() => handleDownloadAttachment(c.id, file)}>Descargar</Button>
+                </div>
+              ))}
             </div>
-          )}
-          {infoPlanId === c.id && (
-            <div className="mt-3 rounded-lg border border-white/15 bg-white/5 p-3 text-xs text-slate-200">
-              <p className="mb-2 font-semibold text-emerald-300">Trabajo detallado del plan</p>
-              {findPlanByName(c.plan_elegido)?.summary && (
-                <p className="mb-2 text-slate-300 leading-relaxed">{findPlanByName(c.plan_elegido)?.summary}</p>
+            <div className="rounded-lg border border-white/10 p-3 text-sm text-slate-300">
+              <p><span className="text-slate-500">Estado documental:</span> {c.documentacion_estado || "Sin clasificar"}</p>
+              <p className="mt-2"><span className="text-slate-500">Comprobante:</span> {c.payment_receipt_uploaded_at ? formatDateTimeAr(c.payment_receipt_uploaded_at) : "No recibido"}</p>
+              {c.payment_receipt_filename && (
+                <Button className="mt-3 bg-white/10 text-white hover:bg-white/20" onClick={() => handleDownloadPaymentReceipt(c)} disabled={downloadingReceiptCaseId === c.id}>
+                  {downloadingReceiptCaseId === c.id ? "Descargando..." : "Descargar comprobante"}
+                </Button>
               )}
-              <ul className="space-y-1">
-                {(findPlanByName(c.plan_elegido)?.details || []).map((item) => (
-                  <li key={item}>• {item}</li>
-                ))}
-              </ul>
             </div>
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-white/10 bg-white/5 p-4">
+          <h4 className="mb-3 text-sm font-semibold text-amber-100">C. Análisis RFA</h4>
+          <div className="grid gap-3 md:grid-cols-3">
+            <label className="text-xs text-slate-300">Estado operativo
+              <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminStatus} onChange={(event) => { const value = event.target.value; setAdminStatus(value); if (!isEnterpriseCase && statusTemplates[value]) setAdminPublicMessage(statusTemplates[value]); }}>
+                <option value="">Mantener: {getOperationalStatusLabel(c.estado)}</option>
+                {(isEnterpriseCase ? enterpriseStatusOptions.map((label) => ({ code: label, label })) : statusOptions).map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
+              </select>
+            </label>
+            <label className="text-xs text-slate-300">Prioridad
+              <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminPriority} onChange={(event) => setAdminPriority(event.target.value)}>
+                <option value="">Mantener: {c.prioridad || "Pendiente"}</option>
+                {priorityOptions.map((priority) => <option key={priority} value={priority}>{priority}</option>)}
+              </select>
+            </label>
+            <label className="text-xs text-slate-300">Riesgo
+              <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminRisk} onChange={(event) => setAdminRisk(event.target.value)}>
+                <option value="">Mantener: {normalizeRiskValue(c.riesgo) || "Sin clasificar"}</option>
+                {riskOptions.map((risk) => <option key={risk} value={risk}>{risk}</option>)}
+              </select>
+            </label>
+            <label className="text-xs text-slate-300 md:col-span-3">Observación interna RFA
+              <textarea className="mt-1 min-h-[110px] w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white placeholder:text-slate-500" value={adminNote} onChange={(event) => setAdminNote(event.target.value)} placeholder={c.observaciones_rfa || "Solo visible para administración RFA"} />
+            </label>
+          </div>
+        </section>
+
+        {!isEnterpriseCase && (
+          <section className="rounded-xl border border-amber-300/25 bg-amber-300/5 p-4">
+            <h4 className="mb-1 text-sm font-semibold text-amber-100">D. Servicio / propuesta</h4>
+            <p className="mb-3 text-xs text-slate-400">El monto corresponde al precio del servicio RFA, no al importe reclamado.</p>
+            <div className="mb-4 grid gap-2 text-sm text-slate-300 md:grid-cols-4">
+              <p><span className="text-slate-500">Servicio actual:</span><br />{getServiceDisplayName(currentService)}</p>
+              <p><span className="text-slate-500">Precio:</span><br />{formatQuotedAmount(c.quoted_amount, c.quoted_currency)}</p>
+              <p><span className="text-slate-500">Situación:</span><br />{getCommercialStatusLabel(currentCommercialStatus)}</p>
+              <p><span className="text-slate-500">Propuesta enviada:</span><br />{c.quoted_at ? formatDateTimeAr(c.quoted_at) : "-"}</p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="text-xs text-slate-300">Servicio
+                <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminServiceCode} onChange={(event) => setAdminServiceCode(event.target.value)}>
+                  <option value="">Mantener: {getServiceDisplayName(currentService)}</option>
+                  <option value={analysisService.code}>{analysisService.name}</option>
+                  {plans.map((service) => <option key={service.code} value={service.code}>{service.name}</option>)}
+                </select>
+              </label>
+              <label className="text-xs text-slate-300">Precio del servicio (ARS)
+                <input type="number" min="1" step="1" className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminQuotedAmount} onChange={(event) => setAdminQuotedAmount(event.target.value)} placeholder={c.quoted_amount ? String(c.quoted_amount) : "Ej.: 65000"} />
+              </label>
+              <label className="text-xs text-slate-300 md:col-span-2">Alcance acordado para este caso
+                <textarea className="mt-1 min-h-[120px] w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white placeholder:text-slate-500" value={adminQuotedScope} onChange={(event) => setAdminQuotedScope(event.target.value)} placeholder={c.quoted_scope || "Detallá entregables, seguimiento y límites del servicio"} />
+              </label>
+              <label className="text-xs text-slate-300 md:col-span-2">Situación comercial
+                <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminCommercialStatus} onChange={(event) => setAdminCommercialStatus(event.target.value)}>
+                  <option value="">Mantener: {getCommercialStatusLabel(currentCommercialStatus)}</option>
+                  {commercialStatusOptions.map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
+                </select>
+              </label>
+            </div>
+          </section>
+        )}
+
+        <section className="rounded-xl border border-white/10 bg-white/5 p-4">
+          <h4 className="mb-3 text-sm font-semibold text-amber-100">E. Comunicaciones / seguimiento</h4>
+          {!isEnterpriseCase && (
+            <label className="mb-4 block text-xs text-slate-300">Mensaje público para el cliente
+              <textarea className="mt-1 min-h-[100px] w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white placeholder:text-slate-500" value={adminPublicMessage} onChange={(event) => setAdminPublicMessage(event.target.value)} placeholder="Solo este texto será visible en Consultar caso" />
+            </label>
+          )}
+          <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
+            {(updates[c.id] || []).length === 0 && <p className="text-sm text-slate-400">Sin actualizaciones registradas.</p>}
+            {(updates[c.id] || []).map((update) => (
+              <div key={update.id} className="rounded-lg border border-white/10 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm text-slate-200">{update.mensaje}</p>
+                  <span className="text-[10px] uppercase tracking-wide text-slate-500">{update.visibility === "rfa_internal" ? "Interna RFA" : update.visibility === "enterprise_internal" ? "Interna empresa" : "Pública"}</span>
+                </div>
+                <p className="mt-2 text-xs text-slate-500">{formatDateTimeAr(update.created_at)}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <Button className="bg-emerald-500 text-white hover:bg-emerald-600" onClick={() => handleAdminUpdate(c.id)} disabled={submitting || !hasUnsavedChanges}>
+          {submitting ? "Guardando..." : "Guardar cambios del caso"}
+        </Button>
+      </div>
+    );
+  };
+
+
+  const renderAdminCasePanel = (c) => {
+    const isEnterpriseCase = Boolean(c.enterprise_user_id);
+    const currentService = getCaseServiceValue(c) || analysisService.code;
+    const currentCommercialStatus = getEffectiveCommercialStatus(c);
+    const attachments = parseArray(c.adjuntos);
+    const history = updates[c.id] || [];
+    const missingDocuments = c.documentacion_faltante || c.documentacion_faltantes || c.faltantes;
+    const hasCommercialData = !isEnterpriseCase && Boolean(
+      getCaseServiceValue(c) || c.commercial_status || c.quoted_amount || c.quoted_currency ||
+      c.quoted_scope || c.quoted_at || c.proposal_accepted_at || c.payment_confirmed_at
+    );
+    const tabs = [
+      { value: "summary", label: "Resumen" },
+      { value: "documentation", label: "Documentacion" },
+      { value: "management", label: "Gestion" },
+      ...(hasCommercialData ? [{ value: "commercial", label: "Comercial" }] : []),
+      { value: "activity", label: "Actividad" }
+    ];
+    const infoItem = (label, value, className = "") => (
+      <div className={className}>
+        <p className="text-[11px] uppercase tracking-wide text-slate-500">{label}</p>
+        <p className="mt-1 break-words text-sm text-slate-100">{value || "-"}</p>
+      </div>
+    );
+
+    return (
+      <div className="rounded-2xl border border-white/10 p-4 shadow-inner shadow-slate-950/20 md:p-5" style={{ backgroundColor: "#17365e" }}>
+        <div className="flex flex-col gap-4 border-b border-white/10 pb-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <button type="button" className="mb-3 text-xs font-semibold text-sky-300 hover:text-sky-200" onClick={() => handleToggleUpdates(c.id)}>
+              Volver a casos
+            </button>
+            <p className="text-xs uppercase tracking-[0.18em] text-amber-200">Expediente</p>
+            <h3 className="mt-1 text-2xl font-semibold text-white">{c.case_code || c.id}</h3>
+            <p className="mt-1 text-sm text-slate-400">{c.nombre_completo || "Sin nombre"} · {isEnterpriseCase ? "Caso empresa" : "Persona"}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusBadge(c.estado)}`}>{getOperationalStatusLabel(c.estado)}</span>
+            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getPriorityBadge(c.prioridad)}`}>{c.prioridad || "Pendiente"}</span>
+            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${normalizeRiskValue(c.riesgo) ? getRiskBadge(normalizeRiskValue(c.riesgo)) : "bg-amber-500/25 text-amber-200"}`}>{normalizeRiskValue(c.riesgo) || "Sin clasificar"}</span>
+          </div>
+        </div>
+
+        <nav className="mt-4 flex flex-wrap gap-1 border-b border-white/10" aria-label="Secciones del expediente">
+          {tabs.map((tab) => (
+            <button
+              key={tab.value}
+              type="button"
+              className={`rfa-admin-detail-tab border-b-2 px-3 py-2 text-sm font-semibold transition ${adminDetailTab === tab.value ? "rfa-admin-detail-tab-active border-amber-300 text-white" : "border-transparent text-slate-400 hover:text-slate-200"}`}
+              onClick={() => setAdminDetailTab(tab.value)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+
+        <div className="mt-5">
+          {adminDetailTab === "summary" && (
+            <section className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {infoItem("Cliente", c.nombre_completo)}
+                {infoItem("Contacto", getCaseContactEmail(c) || c.telefono)}
+                {infoItem("DNI/CUIT", c.dni_cuit)}
+                {infoItem("Origen", isEnterpriseCase ? c.enterprise_email || c.empresa || "Empresa" : "RFA directo")}
+                {infoItem("Empresa reclamada", c.entidad)}
+                {infoItem("Categoria", c.categoria)}
+                {infoItem("Fecha de ingreso", formatDateTimeAr(c.created_at))}
+                {infoItem("Ultima actividad", formatDateTimeAr(c.updated_at || c.created_at))}
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <p className="text-[11px] uppercase tracking-wide text-slate-500">Descripcion completa</p>
+                <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-100">{c.relato || c.detalle || "-"}</p>
+              </div>
+            </section>
+          )}
+
+          {adminDetailTab === "documentation" && (
+            <section className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <p className="text-[11px] uppercase tracking-wide text-slate-500">Estado documental</p>
+                <p className="mt-1 text-sm text-slate-100">{c.documentacion_estado || "No informado"}</p>
+                {missingDocuments && <p className="mt-4 text-sm text-slate-300"><span className="text-slate-500">Faltantes:</span> {missingDocuments}</p>}
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <p className="text-[11px] uppercase tracking-wide text-slate-500">Archivos adjuntos</p>
+                {attachments.length === 0 && <p className="mt-2 text-sm text-slate-400">Sin archivos adjuntos.</p>}
+                <div className="mt-2 space-y-2">
+                  {attachments.map((file) => (
+                    <div key={file.filename || file.originalName} className="flex items-center justify-between gap-3 rounded-lg border border-white/10 px-3 py-2">
+                      <span className="truncate text-xs text-slate-200">{file.originalName || file.filename}</span>
+                      <Button type="button" className="h-auto bg-white/10 px-2 py-1 text-xs text-white hover:bg-white/20" onClick={() => handleDownloadAttachment(c.id, file)}>Descargar</Button>
+                    </div>
+                  ))}
+                </div>
+                {c.payment_receipt_uploaded_at && <p className="mt-4 text-xs text-slate-400">Comprobante recibido: {formatDateTimeAr(c.payment_receipt_uploaded_at)}</p>}
+                {c.payment_receipt_filename && <Button type="button" className="mt-2 bg-white/10 text-white hover:bg-white/20" onClick={() => handleDownloadPaymentReceipt(c)} disabled={downloadingReceiptCaseId === c.id}>{downloadingReceiptCaseId === c.id ? "Descargando..." : "Descargar comprobante"}</Button>}
+              </div>
+            </section>
+          )}
+
+          {adminDetailTab === "management" && (
+            <section className="rounded-xl border border-white/10 bg-white/5 p-4">
+              <div className="grid gap-4 md:grid-cols-3">
+                <label className="text-xs text-slate-300">Estado operativo
+                  <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminStatus} onChange={(event) => { const value = event.target.value; setAdminStatus(value); if (!isEnterpriseCase && statusTemplates[value]) setAdminPublicMessage(statusTemplates[value]); }}>
+                    <option value="">Mantener: {getOperationalStatusLabel(c.estado)}</option>
+                    {(isEnterpriseCase ? enterpriseStatusOptions.map((label) => ({ code: label, label })) : statusOptions).map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
+                  </select>
+                </label>
+                <label className="text-xs text-slate-300">Prioridad
+                  <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminPriority} onChange={(event) => setAdminPriority(event.target.value)}>
+                    <option value="">Mantener: {c.prioridad || "Pendiente"}</option>
+                    {priorityOptions.map((priority) => <option key={priority} value={priority}>{priority}</option>)}
+                  </select>
+                </label>
+                <label className="text-xs text-slate-300">Riesgo
+                  <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminRisk} onChange={(event) => setAdminRisk(event.target.value)}>
+                    <option value="">Mantener: {normalizeRiskValue(c.riesgo) || "Sin clasificar"}</option>
+                    {riskOptions.map((risk) => <option key={risk} value={risk}>{risk}</option>)}
+                  </select>
+                </label>
+                <label className="text-xs text-slate-300 md:col-span-3">Observacion interna RFA
+                  <span className="ml-2 text-[11px] text-amber-200">Solo visible para administracion RFA</span>
+                  <textarea className="mt-1 min-h-[130px] w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white placeholder:text-slate-500" value={adminNote} onChange={(event) => setAdminNote(event.target.value)} placeholder={c.observaciones_rfa || "Escribi una observacion interna"} />
+                </label>
+              </div>
+            </section>
+          )}
+
+          {adminDetailTab === "commercial" && hasCommercialData && (
+            <section className="rounded-xl border border-amber-300/25 bg-amber-300/5 p-4">
+              <div className="grid gap-4 text-sm text-slate-300 md:grid-cols-2 lg:grid-cols-4">
+                {infoItem("Servicio RFA", getServiceDisplayName(currentService))}
+                {infoItem("Situacion comercial", getCommercialStatusLabel(currentCommercialStatus))}
+                {infoItem("Precio", formatQuotedAmount(c.quoted_amount, c.quoted_currency))}
+                {infoItem("Moneda", c.quoted_currency)}
+                {infoItem("Propuesta enviada", c.quoted_at ? formatDateTimeAr(c.quoted_at) : "-", "lg:col-span-2")}
+                {infoItem("Aceptacion", c.proposal_accepted_at ? formatDateTimeAr(c.proposal_accepted_at) : "-", "lg:col-span-2")}
+                {infoItem("Pago confirmado", c.payment_confirmed_at ? formatDateTimeAr(c.payment_confirmed_at) : "-", "lg:col-span-2")}
+              </div>
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <label className="text-xs text-slate-300">Servicio
+                  <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminServiceCode} onChange={(event) => setAdminServiceCode(event.target.value)}>
+                    <option value="">Mantener: {getServiceDisplayName(currentService)}</option>
+                    <option value={analysisService.code}>{analysisService.name}</option>
+                    {plans.map((service) => <option key={service.code} value={service.code}>{service.name}</option>)}
+                  </select>
+                </label>
+                <label className="text-xs text-slate-300">Precio del servicio (ARS)
+                  <input type="number" min="1" step="1" className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminQuotedAmount} onChange={(event) => setAdminQuotedAmount(event.target.value)} placeholder={c.quoted_amount ? String(c.quoted_amount) : "Ej.: 65000"} />
+                </label>
+                <label className="text-xs text-slate-300 md:col-span-2">Alcance acordado
+                  <textarea className="mt-1 min-h-[120px] w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white placeholder:text-slate-500" value={adminQuotedScope} onChange={(event) => setAdminQuotedScope(event.target.value)} placeholder={c.quoted_scope || "Detalle del alcance del servicio"} />
+                </label>
+                <label className="text-xs text-slate-300 md:col-span-2">Situacion comercial
+                  <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminCommercialStatus} onChange={(event) => setAdminCommercialStatus(event.target.value)}>
+                    <option value="">Mantener: {getCommercialStatusLabel(currentCommercialStatus)}</option>
+                    {commercialStatusOptions.map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
+                  </select>
+                </label>
+              </div>
+              {!isEnterpriseCase && ["proposal_sent", "payment_pending"].includes(currentCommercialStatus) && (
+                <div className="mt-4 border-t border-white/10 pt-4">
+                  <p className="text-sm font-medium text-slate-200">Enlace de un solo uso, válido por 72 horas. Compartilo únicamente con el email del caso.</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {currentCommercialStatus === "proposal_sent" && <Button type="button" className="bg-white/10 text-white hover:bg-white/20" disabled={creatingPublicActionLink} onClick={() => generatePublicActionLink(c.id, "proposal_accept")}>{creatingPublicActionLink ? "Generando..." : "Generar enlace para aceptar"}</Button>}
+                    {currentCommercialStatus === "payment_pending" && <Button type="button" className="bg-white/10 text-white hover:bg-white/20" disabled={creatingPublicActionLink} onClick={() => generatePublicActionLink(c.id, "payment_receipt")}>{creatingPublicActionLink ? "Generando..." : "Generar enlace para comprobante"}</Button>}
+                  </div>
+                  {publicActionLink?.caseId === c.id && (
+                    <div className="mt-3 space-y-1">
+                      <label className="block text-xs text-slate-400" htmlFor={`public-action-link-${c.id}`}>Enlace generado; copiado al portapapeles si el navegador lo permite. Vence: {formatDateTimeAr(publicActionLink.expiresAt)}</label>
+                      <input id={`public-action-link-${c.id}`} readOnly value={publicActionLink.url} onFocus={(event) => event.target.select()} className="w-full rounded-lg border border-white/15 bg-slate-950/70 px-3 py-2 text-xs text-slate-200" />
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+          )}
+
+          {adminDetailTab === "activity" && (
+            <section className="space-y-4">
+              {!isEnterpriseCase && (
+                <label className="block text-xs text-slate-300">Mensaje publico para el cliente
+                  <textarea className="mt-1 min-h-[100px] w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white placeholder:text-slate-500" value={adminPublicMessage} onChange={(event) => setAdminPublicMessage(event.target.value)} placeholder="Solo este texto sera visible en Consultar caso" />
+                </label>
+              )}
+              <div className="relative space-y-3 pl-5 before:absolute before:bottom-2 before:left-[5px] before:top-2 before:w-px before:bg-white/15">
+                {history.length === 0 && <p className="text-sm text-slate-400">Sin actualizaciones registradas.</p>}
+                {history.map((update) => (
+                  <article key={update.id} className="rfa-admin-activity-item relative rounded-xl border border-white/10 bg-white/5 p-4 before:absolute before:-left-[25px] before:top-5 before:h-2.5 before:w-2.5 before:rounded-full before:border-2 before:border-sky-300 before:bg-slate-950">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="text-[11px] uppercase tracking-wide text-sky-300">{formatDateTimeAr(update.created_at)}</p>
+                        <h4 className="mt-1 text-sm font-semibold text-white">{update.estado ? `Estado: ${getOperationalStatusLabel(update.estado)}` : "Registro de actividad"}</h4>
+                      </div>
+                      <span className="text-[10px] uppercase tracking-wide text-slate-500">{update.visibility === "rfa_internal" ? "Interna RFA" : update.visibility === "enterprise_internal" ? "Interna empresa" : "Publica"}</span>
+                    </div>
+                    <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-slate-300">{update.mensaje || "Sin contenido"}</p>
+                  </article>
+                ))}
+              </div>
+            </section>
           )}
         </div>
-      )}
-      <div className="border border-emerald-500/30 rounded-xl p-4 bg-emerald-500/5">
-        <h4 className="text-sm font-semibold text-emerald-200 mb-3">Clasificación y comentario RFA</h4>
-        <div className="space-y-3">
-          <select
-            className="w-full rounded-lg bg-slate-900/70 border border-white/20 px-4 py-2 text-white"
-            value={adminStatus}
-            onChange={(e) => {
-              const value = e.target.value;
-              setAdminStatus(value);
-              if (statusTemplates[value]) setAdminNote(statusTemplates[value]);
-            }}
-          >
-            <option value="">Estado del caso</option>
-            {statusOptions.map((status) => (
-              <option key={status} value={status}>{status}</option>
-            ))}
-          </select>
-          <select
-            className="w-full rounded-lg bg-slate-900/70 border border-white/20 px-4 py-2 text-white"
-            value={adminPriority}
-            onChange={(e) => setAdminPriority(e.target.value)}
-          >
-            <option value="">Prioridad (opcional)</option>
-            {priorityOptions.map((priority) => (
-              <option key={priority} value={priority}>{priority}</option>
-            ))}
-          </select>
-          <select
-            className="w-full rounded-lg bg-slate-900/70 border border-white/20 px-4 py-2 text-white"
-            value={adminRisk}
-            onChange={(e) => setAdminRisk(e.target.value)}
-          >
-            <option value="">Riesgo (definición admin)</option>
-            {riskOptions.map((risk) => (
-              <option key={risk} value={risk}>{risk}</option>
-            ))}
-          </select>
-          <textarea
-            placeholder="Comentario interno RFA para que lo vea la empresa (opcional)"
-            className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-2 text-white placeholder:text-slate-400 min-h-[120px]"
-            value={adminNote}
-            onChange={(e) => setAdminNote(e.target.value)}
-          />
-          <Button
-            className="bg-emerald-500 hover:bg-emerald-600 text-white"
-            onClick={() => handleAdminUpdate(c.id)}
-            disabled={submitting}
-          >
-            {submitting ? "Guardando..." : "Guardar actualización"}
-          </Button>
+
+        <div className="mt-5 flex justify-end border-t border-white/10 pt-4">
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            {adminSaveNotice && <p className="text-xs text-emerald-300" role="status" aria-live="polite">{adminSaveNotice}</p>}
+            <Button type="button" className="bg-sky-600 text-white hover:bg-sky-500" onClick={() => handleAdminUpdate(c.id)} disabled={submitting || !hasUnsavedChanges}>
+              {submitting ? "Guardando..." : "Guardar cambios del caso"}
+            </Button>
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
-    <div className="min-h-screen text-slate-100 px-4 md:px-6 py-16 pt-24">
+    <div
+      className={isAdmin ? "rfa-admin-shell min-h-screen bg-[#071a3a] text-slate-100 px-4 md:px-6 py-16 pt-24" : isPublicCreateMode ? "rfa-public-create-page min-h-screen px-4 md:px-6 py-16 pt-24" : "min-h-screen text-slate-100 px-4 md:px-6 py-16 pt-24"}
+      style={isPublicCreateMode ? { "--rfa-create-hero": "url('/images/rfa-home-01.png')" } : undefined}
+    >
       <div className="max-w-[110rem] mx-auto">
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-10">
+        {isAdmin && (
+          <header className="mb-8 flex flex-col gap-5 border-b border-white/10 pb-6 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.22em] text-amber-300">RFA / Administracion</p>
+              <h1 className="text-3xl font-bold tracking-tight md:text-4xl">Panel de gestion</h1>
+              <p className="mt-2 text-slate-300">Administracion y seguimiento de casos RFA.</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <nav className="flex flex-wrap rounded-lg border border-white/10 bg-slate-950/30 p-1" aria-label="Vistas de casos">
+                {[
+                  { value: "attention", label: "Atención", source: "todos" },
+                  { value: "all", label: "Todos", source: "todos" },
+                  { value: "all-rfa", label: "Personas", source: "rfa" },
+                  { value: "all-enterprise", label: "Empresas", source: "empresa" },
+                  { value: "closed", label: "Cerrados", source: "todos" }
+                ].map((option) => {
+                  const active = option.value === "all-rfa"
+                    ? adminListFilter === "all" && adminCaseSourceFilter === "rfa"
+                    : option.value === "all-enterprise"
+                      ? adminListFilter === "all" && adminCaseSourceFilter === "empresa"
+                      : adminListFilter === option.value && adminCaseSourceFilter === option.source;
+                  return (
+                  <button
+                    key={`${option.value}-${option.source}`}
+                    type="button"
+                    aria-pressed={active}
+                    className={`rounded-md px-3 py-2 text-xs font-semibold transition ${active ? "bg-white text-slate-900" : "text-slate-300 hover:bg-white/10 hover:text-white"}`}
+                    onClick={() => handleAdminListFilter(option.value.startsWith("all") ? "all" : option.value, option.source)}
+                  >
+                    {option.label}
+                  </button>
+                  );
+                })}
+              </nav>
+              <Button type="button" onClick={() => setAdminImportOpen((prev) => !prev)} className="bg-sky-600 text-white hover:bg-sky-500">
+                {adminImportOpen ? "Cerrar importacion" : "Importar casos"}
+              </Button>
+              <Button onClick={handleLogout} className="bg-white/10 text-white hover:bg-white/20">
+                Cerrar sesion
+              </Button>
+            </div>
+          </header>
+        )}
+        {!isAdmin && <div className={`flex flex-wrap items-center justify-between gap-4 mb-10 ${isPublicCreateMode ? "rfa-public-create-heading" : ""}`}>
           <div>
-            <h1 className="text-3xl font-bold">Panel de casos</h1>
+            <h1 className="text-3xl font-bold">{isCreateCasePage ? "Nuevo caso" : "Panel de casos"}</h1>
             <p className="text-slate-300">
               {isPublicCreateMode
-                ? "Completa el formulario para crear tu caso y obtener tu ID de seguimiento."
-                : isAdmin
-                  ? "Panel administrador: revisa y actualiza todos los reclamos."
-                  : isEnterprise
+                ? "Contanos qué pasó. Vamos a revisar la información antes de proponerte cualquier servicio."
+                : isEnterprise
                     ? "Panel empresa: organiza y clasifica casos con estado y prioridad."
                     : "Carga nuevos reclamos y sigue el estado."}
             </p>
@@ -1378,7 +1854,22 @@ export default function Dashboard() {
               Cerrar sesión
             </Button>
           )}
-        </div>
+        </div>}
+        {isAdmin && (
+          <div className="mb-8 grid grid-cols-2 gap-3 lg:grid-cols-5">
+            {adminSummary.map((metric) => (
+              <button
+                key={metric.label}
+                type="button"
+                onClick={() => handleAdminListFilter(metric.filter, metric.source || "todos")}
+                className={`rounded-xl border px-4 py-3 text-left transition hover:-translate-y-0.5 hover:border-white/30 ${metric.tone === "amber" ? "border-amber-300/30 bg-amber-400/10" : metric.tone === "gold" ? "border-yellow-300/30 bg-yellow-400/10" : metric.tone === "blue" ? "border-sky-300/25 bg-sky-400/10" : "border-white/10 bg-white/5"}`}
+              >
+                <p className="text-xs font-medium text-slate-300">{metric.label}</p>
+                <p className="mt-1 text-2xl font-bold text-white">{metric.value}</p>
+              </button>
+            ))}
+          </div>
+        )}
         {hasUnsavedChanges && (
           <div className="mb-6 rounded-xl border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200 flex flex-wrap items-center justify-between gap-3">
             <span>Tenés cambios sin guardar. Guardalos antes de salir de esta pantalla.</span>
@@ -1395,12 +1886,8 @@ export default function Dashboard() {
 
         <div className={`grid gap-8 ${isAdmin ? "md:grid-cols-1" : "md:grid-cols-1"}`}>
           {showNewClaimSection && (
-          <div className="bg-white/10 border border-white/10 rounded-2xl p-6 backdrop-blur">
-            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-              <div>
-                <h2 className="text-xl font-semibold">Nuevo reclamo</h2>
-                <p className="text-xs text-slate-400">Completá los datos básicos para iniciar el caso.</p>
-              </div>
+          <div className={`bg-white/10 border border-white/10 rounded-2xl p-6 backdrop-blur ${isPublicCreateMode ? "rfa-public-create-card" : ""}`}>
+            <div className="flex flex-wrap items-center justify-end gap-3 mb-4">
               <Button
                 type="button"
                 className="bg-white/10 hover:bg-white/20 text-white"
@@ -1409,307 +1896,279 @@ export default function Dashboard() {
                 {showNewCaseForm ? "Ocultar" : "Mostrar"}
               </Button>
             </div>
-            {!canSubmitCase && (
-              <div className="mb-4 rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-                Ya tenés un reclamo activo. Para cargar uno nuevo necesitás Plan Completo.
-              </div>
-            )}
             {showNewCaseForm && (
-            <form onSubmit={handleCreateCase} className="space-y-4">
-              <input
-                type="text"
-                placeholder="Nombre completo"
-                aria-label="Nombre completo"
-                className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
-                value={nombreCompleto}
-                onChange={(e) => setNombreCompleto(e.target.value)}
-                disabled={!canSubmitCase}
-                required
-              />
-              <div className="grid md:grid-cols-2 gap-3">
+            <form onSubmit={handleCreateCase} className="space-y-6">
+              <div className="space-y-3">
+                <div>
+                  <h3 className="text-base font-semibold text-white">1. Tus datos</h3>
+                  <p className="mt-1 text-sm text-slate-400">Necesitamos estos datos para analizar el caso y poder contactarte.</p>
+                </div>
                 <input
                   type="text"
-                  placeholder="DNI / CUIT"
-                  aria-label="DNI o CUIT"
+                  placeholder="Nombre completo"
+                  aria-label="Nombre completo"
                   className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
-                  value={dniCuit}
-                  onChange={(e) => setDniCuit(e.target.value)}
-                  disabled={!canSubmitCase}
-                />
-                <input
-                  type="email"
-                  placeholder="Correo electrónico"
-                  className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
-                  value={emailContacto}
-                  onChange={(e) => setEmailContacto(e.target.value)}
-                  disabled={!canSubmitCase}
-                />
-              </div>
-              <input
-                type="tel"
-                placeholder="Teléfono / WhatsApp"
-                className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
-                value={telefono}
-                onChange={(e) => setTelefono(e.target.value)}
-                disabled={!canSubmitCase}
-              />
-              <input
-                type="text"
-                placeholder="Entidad o empresa"
-                aria-label="Entidad o empresa"
-                className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
-                value={entidad}
-                onChange={(e) => setEntidad(e.target.value)}
-                disabled={!canSubmitCase}
-              />
-              <select
-                className="w-full rounded-lg bg-slate-900/70 border border-white/20 px-4 py-3 text-white"
-                aria-label="Tipo de entidad"
-                value={tipoEntidad}
-                onChange={(e) => setTipoEntidad(e.target.value)}
-                disabled={!canSubmitCase}
-              >
-                <option value="">Tipo de entidad</option>
-                <option value="Banco tradicional">Banco tradicional</option>
-                <option value="Banco digital">Banco digital</option>
-                <option value="Billetera digital">Billetera digital</option>
-                <option value="Plataforma de inversión">Plataforma de inversión</option>
-                <option value="Casa de apuestas">Casa de apuestas</option>
-                <option value="Otro">Otro</option>
-              </select>
-              <div className="grid md:grid-cols-3 gap-3">
-                <input
-                  type="text"
-                  placeholder="Monto (aprox.)"
-                  aria-label="Monto aproximado"
-                  className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
-                  value={montoValor}
-                  onChange={(e) => setMontoValor(e.target.value)}
-                  disabled={!canSubmitCase}
-                />
-                <select
-                  className="w-full rounded-lg bg-slate-900/70 border border-white/20 px-4 py-3 text-white"
-                  aria-label="Escala de monto"
-                  value={montoEscala}
-                  onChange={(e) => setMontoEscala(e.target.value)}
-                  disabled={!canSubmitCase}
-                >
-                  <option value="">Escala</option>
-                  <option value="Cientos">Cientos</option>
-                  <option value="Miles">Miles</option>
-                  <option value="Millones">Millones</option>
-                </select>
-                <select
-                  className="w-full rounded-lg bg-slate-900/70 border border-white/20 px-4 py-3 text-white"
-                  aria-label="Moneda"
-                  value={montoMoneda}
-                  onChange={(e) => setMontoMoneda(e.target.value)}
-                  disabled={!canSubmitCase}
-                >
-                  <option value="">Moneda</option>
-                  <option value="ARS">Peso (ARS)</option>
-                  <option value="USD">Dólar (USD)</option>
-                </select>
-              </div>
-              <select
-                className="w-full rounded-lg bg-slate-900/70 border border-white/20 px-4 py-3 text-white"
-                aria-label="Plan elegido"
-                value={planElegido}
-                onChange={(e) => setPlanElegido(e.target.value)}
-                disabled={!canSubmitCase}
-              >
-                <option value="">Elegir plan</option>
-                <option value={FIRST_CONTACT_PLAN}>{FIRST_CONTACT_PLAN}</option>
-                {plans.map((plan) => (
-                  <option key={plan.id} value={plan.name}>{plan.name}</option>
-                ))}
-              </select>
-              <div className="space-y-2">
-                <p className="text-sm text-slate-300">Medios de pago</p>
-                {["Transferencia bancaria", "Tarjeta de crédito", "Tarjeta de débito", "PayPal", "Otros"].map((medio) => (
-                  <label key={medio} className="flex items-center gap-2 text-sm text-slate-300">
-                    <input
-                      type="checkbox"
-                      checked={mediosPago.includes(medio)}
-                      disabled={!canSubmitCase}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setMediosPago((prev) => [...prev, medio]);
-                        } else {
-                          setMediosPago((prev) => prev.filter((m) => m !== medio));
-                        }
-                      }}
-                    />
-                    {medio}
-                  </label>
-                ))}
-              </div>
-              <textarea
-                placeholder="Descripción del caso (contá con tus palabras qué pasó)"
-                className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400 min-h-[160px]"
-                value={relato}
-                onChange={(e) => setRelato(e.target.value)}
-                disabled={!canSubmitCase}
-                required
-              />
-              <input
-                type="file"
-                aria-label="Adjuntar archivos"
-                multiple
-                className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white"
-                onChange={(e) => setAdjuntos(e.target.files)}
-                disabled={!canSubmitCase}
-              />
-              <label className="flex items-start gap-2 text-sm text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={autorizacion}
-                  onChange={(e) => setAutorizacion(e.target.checked)}
+                  value={nombreCompleto}
+                  onChange={(e) => setNombreCompleto(e.target.value)}
                   disabled={!canSubmitCase}
                   required
                 />
-                Autorizo a RFA a realizar gestiones administrativas y comunicaciones en mi nombre con el único fin de
-                resolver el reclamo informado.
-              </label>
-              {publicCaseCode && (
-                <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-                  Caso cargado. Guarda tu ID de seguimiento: <strong>{publicCaseCode}</strong>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <input
+                    type="email"
+                    placeholder="Correo electrónico"
+                    aria-label="Correo electrónico"
+                    className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
+                    value={emailContacto}
+                    onChange={(e) => setEmailContacto(e.target.value)}
+                    disabled={!canSubmitCase}
+                    required
+                  />
+                  <input
+                    type="tel"
+                    placeholder="Teléfono / WhatsApp (opcional)"
+                    aria-label="Teléfono o WhatsApp"
+                    className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
+                    value={telefono}
+                    onChange={(e) => setTelefono(e.target.value)}
+                    disabled={!canSubmitCase}
+                  />
                 </div>
-              )}
-              {error && <p className="text-rose-300 text-sm">{error}</p>}
-              <Button
-                type="submit"
-                className="w-full bg-emerald-500 hover:bg-emerald-600 text-white"
-                disabled={submitting || !canSubmitCase}
-              >
-                {submitting ? "Enviando..." : "Enviar reclamo"}
-              </Button>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <h3 className="text-base font-semibold text-white">2. Tu reclamo</h3>
+                  <p className="mt-1 text-sm text-slate-400">Contanos qué ocurrió y contra quién necesitás reclamar.</p>
+                </div>
+                <input
+                  type="text"
+                  placeholder="Empresa o proveedor reclamado"
+                  aria-label="Empresa o proveedor reclamado"
+                  className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
+                  value={entidad}
+                  onChange={(e) => setEntidad(e.target.value)}
+                  disabled={!canSubmitCase}
+                  required
+                />
+                <select
+                  className="w-full rounded-lg bg-slate-900/70 border border-white/20 px-4 py-3 text-white"
+                  aria-label="Categoría del problema"
+                  value={categoria}
+                  onChange={(e) => setCategoria(e.target.value)}
+                  disabled={!canSubmitCase}
+                  required
+                >
+                  <option value="">Categoría del problema</option>
+                  {publicCaseCategories.map((category) => <option key={category} value={category}>{category}</option>)}
+                </select>
+                <textarea
+                  placeholder="Describí qué pasó, cuándo ocurrió y qué respuesta recibiste (si la hubo)."
+                  aria-label="Descripción del reclamo"
+                  className="min-h-[220px] w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
+                  value={relato}
+                  onChange={(e) => setRelato(e.target.value)}
+                  disabled={!canSubmitCase}
+                  required
+                />
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <h3 className="text-base font-semibold text-white">3. Información adicional</h3>
+                  <p className="mt-1 text-sm text-slate-400">Estos datos son opcionales y ayudan a entender mejor el caso.</p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <input
+                    type="text"
+                    placeholder="Monto aproximado (opcional)"
+                    aria-label="Monto aproximado"
+                    className="w-full rounded-lg bg-white/10 border border-white/10 px-4 py-3 text-white placeholder:text-slate-400"
+                    value={montoValor}
+                    onChange={(e) => setMontoValor(e.target.value)}
+                    disabled={!canSubmitCase}
+                  />
+                  <select
+                    className="w-full rounded-lg bg-slate-900/70 border border-white/20 px-4 py-3 text-white"
+                    aria-label="Moneda"
+                    value={montoMoneda}
+                    onChange={(e) => setMontoMoneda(e.target.value)}
+                    disabled={!canSubmitCase}
+                  >
+                    <option value="ARS">Peso (ARS)</option>
+                    <option value="USD">Dólar (USD)</option>
+                  </select>
+                </div>
+                <label className="block rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
+                  <span className="font-medium text-slate-200">Documentación (opcional)</span>
+                  <input
+                    type="file"
+                    aria-label="Adjuntar documentación"
+                    multiple
+                    className="mt-2 block w-full text-sm text-slate-300 file:mr-3 file:rounded-md file:border-0 file:bg-slate-700 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-slate-600"
+                    accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.txt,application/pdf,image/png,image/jpeg,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+                    onChange={(e) => {
+                      const selectedFiles = Array.from(e.target.files || []);
+                      const validationError = validatePublicCaseAttachments(selectedFiles);
+                      if (validationError) {
+                        setAdjuntos([]);
+                        e.target.value = "";
+                        setError(validationError);
+                        return;
+                      }
+                      setAdjuntos(selectedFiles);
+                      setError("");
+                    }}
+                    disabled={!canSubmitCase}
+                  />
+                  <span className="mt-2 block text-xs text-slate-400">Podés adjuntar hasta 5 archivos (PDF, JPG, PNG, DOC, DOCX o TXT). Máximo 25 MB por archivo y 50 MB en total.</span>
+                  {adjuntos?.length > 0 && <span className="mt-2 block text-xs text-slate-400">{adjuntos.length} archivo(s) seleccionado(s).</span>}
+                </label>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <h3 className="text-base font-semibold text-white">4. Confirmación</h3>
+                  <div className="mt-2 rounded-xl border border-emerald-400/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
+                    <p className="font-semibold">Análisis inicial sin costo.</p>
+                    <p className="mt-1">Revisamos tu caso para determinar si RFA puede ayudarte.</p>
+                    <p className="mt-1">Si corresponde, te informaremos el servicio disponible, su alcance y precio antes de comenzar cualquier trabajo pago.</p>
+                  </div>
+                </div>
+                <label className="flex items-start gap-2 text-sm text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={aceptaTerminos}
+                    onChange={(e) => setAceptaTerminos(e.target.checked)}
+                    disabled={!canSubmitCase}
+                    required
+                  />
+                  <span>
+                    Acepto los{" "}
+                    <Link to="/terminos" className="text-emerald-300 font-semibold hover:underline">
+                      Términos y Condiciones
+                    </Link>.
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 text-sm text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={aceptaPrivacidad}
+                    onChange={(e) => setAceptaPrivacidad(e.target.checked)}
+                    disabled={!canSubmitCase}
+                    required
+                  />
+                  <span>
+                    Acepto el tratamiento de mis datos conforme a la{" "}
+                    <Link to="/privacidad" className="text-emerald-300 font-semibold hover:underline">
+                      Política de Privacidad
+                    </Link>.
+                  </span>
+                </label>
+                {publicCaseCode && (
+                  <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+                    Caso cargado. Guarda tu ID de seguimiento: <strong>{publicCaseCode}</strong>
+                  </div>
+                )}
+                {error && <p className="text-rose-300 text-sm">{error}</p>}
+                <Button
+                  type="submit"
+                  className="w-full bg-emerald-500 hover:bg-emerald-600 text-white"
+                  disabled={submitting || !canSubmitCase}
+                >
+                  {submitting ? "Enviando..." : "Enviar para análisis \u2192"}
+                </Button>
+              </div>
             </form>
             )}
           </div>
           )}
 
           <div className="space-y-4">
-            <h2 className="text-xl font-semibold">{isAdmin ? "Panel administrador: revisa y actualiza todos los reclamos." : isEnterprise ? "Panel empresa: organiza y clasifica casos con estado y prioridad." : "Carga nuevos reclamos y sigue el estado."}</h2>
+            {!isAdmin && !isCreateCasePage && <h2 className="text-xl font-semibold">{isEnterprise ? "Panel empresa: organiza y clasifica casos con estado y prioridad." : "Carga nuevos reclamos y sigue el estado."}</h2>}
 
             {isAdmin && (
-              <div className="bg-white/10 border border-white/10 rounded-2xl p-4">
-                <div className="grid md:grid-cols-7 gap-3">
+              <div className="rounded-2xl border border-white/10 bg-slate-900/45 p-4 shadow-lg shadow-slate-950/10">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(260px,1.7fr)_minmax(150px,.75fr)_minmax(190px,1fr)_auto]">
                   <input
                     type="text"
-                    placeholder="Busqueda global"
-                    className="rounded-lg bg-slate-900/70 border border-white/20 px-3 py-2 text-white placeholder:text-slate-400"
+                    placeholder="Buscar expediente, cliente o empresa"
+                    className="rounded-lg border border-white/15 bg-slate-950/45 px-3 py-2 text-white placeholder:text-slate-500"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                   />
-                  <select
-                    className="rounded-lg bg-slate-900/70 border border-white/20 px-3 py-2 text-white"
-                    value={filterStatus}
-                    onChange={(e) => setFilterStatus(e.target.value)}
-                  >
+                  <select className="rounded-lg border border-white/15 bg-slate-950/45 px-3 py-2 text-white" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
                     <option value="">Estado</option>
-                    {statusOptions.map((status) => (
-                      <option key={status} value={status}>{status}</option>
-                    ))}
+                    {statusOptions.map((status) => <option key={status.code} value={status.code}>{status.label}</option>)}
                   </select>
-                  <select
-                    className="rounded-lg bg-slate-900/70 border border-white/20 px-3 py-2 text-white"
-                    value={filterPlan}
-                    onChange={(e) => setFilterPlan(e.target.value)}
-                  >
-                    <option value="">Plan</option>
-                    <option value={FIRST_CONTACT_PLAN}>{FIRST_CONTACT_PLAN}</option>
-                    {plans.map((plan) => (
-                      <option key={plan.id} value={plan.name}>{plan.name}</option>
-                    ))}
+                  <select className="rounded-lg border border-white/15 bg-slate-950/45 px-3 py-2 text-white" value={adminEnterpriseFilter} onChange={(e) => setAdminEnterpriseFilter(e.target.value)} disabled={adminCaseSourceFilter === "rfa"}>
+                    <option value="">Empresa: todas</option>
+                    {enterpriseUsers.map((enterpriseUser) => <option key={enterpriseUser.id} value={enterpriseUser.id}>{enterpriseUser.email}</option>)}
                   </select>
-                  <select
-                    className="rounded-lg bg-slate-900/70 border border-white/20 px-3 py-2 text-white"
-                    value={filterMoneda}
-                    onChange={(e) => setFilterMoneda(e.target.value)}
-                  >
-                    <option value="">Moneda</option>
-                    <option value="ARS">ARS</option>
-                    <option value="USD">USD</option>
-                  </select>
-                  <select
-                    className="rounded-lg bg-slate-900/70 border border-white/20 px-3 py-2 text-white"
-                    value={adminCaseSourceFilter}
-                    onChange={(e) => setAdminCaseSourceFilter(e.target.value)}
-                  >
-                    <option value="todos">Origen: todos</option>
-                    <option value="rfa">Origen: usuarios RFA</option>
-                    <option value="empresa">Origen: empresas</option>
-                  </select>
-                  <select
-                    className="rounded-lg bg-slate-900/70 border border-white/20 px-3 py-2 text-white"
-                    value={adminEnterpriseFilter}
-                    onChange={(e) => setAdminEnterpriseFilter(e.target.value)}
-                    disabled={adminCaseSourceFilter === "rfa"}
-                  >
-                    <option value="">Empresa (todas)</option>
-                    {enterpriseUsers.map((enterpriseUser) => (
-                      <option key={enterpriseUser.id} value={enterpriseUser.id}>
-                        {enterpriseUser.email}
-                      </option>
-                    ))}
-                  </select>
-                  <label className="rounded-lg bg-slate-900/70 border border-white/20 px-3 py-2 text-white text-sm flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={adminOnlyUnclassified}
-                      onChange={(e) => setAdminOnlyUnclassified(e.target.checked)}
-                    />
-                    Solo sin clasificar
-                  </label>
+                  <Button type="button" className="bg-white/10 text-white hover:bg-white/20" onClick={() => setShowAdminAdvancedFilters((prev) => !prev)}>
+                    {showAdminAdvancedFilters ? "Ocultar filtros" : "Más filtros"}
+                  </Button>
                 </div>
-                <div className="mt-3 flex flex-wrap items-center gap-3">
-                  <select
-                    className="rounded-lg bg-slate-900/70 border border-white/20 px-3 py-2 text-white"
-                    value={sortKey}
-                    onChange={(e) => setSortKey(e.target.value)}
-                  >
-                    <option value="created_at">Orden: fecha</option>
-                    <option value="nombre_completo">Orden: cliente</option>
-                    <option value="estado">Orden: estado</option>
-                    <option value="plan_elegido">Orden: plan</option>
-                  </select>
-                  <select
-                    className="rounded-lg bg-slate-900/70 border border-white/20 px-3 py-2 text-white"
-                    value={sortDir}
-                    onChange={(e) => setSortDir(e.target.value)}
-                  >
-                    <option value="desc">Descendente</option>
-                    <option value="asc">Ascendente</option>
-                  </select>
-                  <select
-                    className="rounded-lg bg-slate-900/70 border border-white/20 px-3 py-2 text-white"
-                    value={pageSize}
-                    onChange={(e) => setPageSize(Number(e.target.value))}
-                  >
-                    <option value={10}>10 por pagina</option>
-                    <option value={20}>20 por pagina</option>
-                    <option value={50}>50 por pagina</option>
-                  </select>
-                  <Button className="bg-white/10 hover:bg-white/20 text-white" onClick={saveFilters}>
-                    Guardar filtros
-                  </Button>
-                  <Button className="bg-white/10 hover:bg-white/20 text-white" onClick={clearFilters}>
-                    Limpiar
-                  </Button>
-                  <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={exportCsv}>
-                    Exportar CSV
-                  </Button>
-                  <span className="text-xs text-slate-300">
-                    {sortedCases.length} resultados
-                  </span>
+                {showAdminAdvancedFilters && (
+                  <div className="mt-3 grid gap-3 border-t border-white/10 pt-3 md:grid-cols-2 lg:grid-cols-4">
+                    <select className="rounded-lg border border-white/15 bg-slate-950/45 px-3 py-2 text-white" value={filterPriority} onChange={(e) => setFilterPriority(e.target.value)}>
+                      <option value="">Prioridad</option>
+                      {priorityOptions.map((priority) => <option key={priority} value={priority}>{priority}</option>)}
+                    </select>
+                    <select className="rounded-lg border border-white/15 bg-slate-950/45 px-3 py-2 text-white" value={adminCaseSourceFilter} onChange={(e) => setAdminCaseSourceFilter(e.target.value)}>
+                      <option value="todos">Origen: todos</option>
+                      <option value="rfa">Personas</option>
+                      <option value="empresa">Empresas</option>
+                    </select>
+                    <select className="rounded-lg border border-white/15 bg-slate-950/45 px-3 py-2 text-white" value={filterPlan} onChange={(e) => setFilterPlan(e.target.value)}>
+                      <option value="">Servicio</option>
+                      {serviceFilterOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                    <select className="rounded-lg border border-white/15 bg-slate-950/45 px-3 py-2 text-white" value={filterMoneda} onChange={(e) => setFilterMoneda(e.target.value)}>
+                      <option value="">Moneda</option>
+                      <option value="ARS">ARS</option>
+                      <option value="USD">USD</option>
+                    </select>
+                    <input type="text" placeholder="Entidad reclamada" className="rounded-lg border border-white/15 bg-slate-950/45 px-3 py-2 text-white placeholder:text-slate-500" value={filterEntidad} onChange={(e) => setFilterEntidad(e.target.value)} />
+                    <label className="flex items-center gap-2 rounded-lg border border-white/15 bg-slate-950/45 px-3 py-2 text-sm text-slate-200">
+                      <input type="checkbox" checked={adminOnlyUnclassified} onChange={(e) => setAdminOnlyUnclassified(e.target.checked)} />
+                      Solo sin clasificar
+                    </label>
+                    <select className="rounded-lg border border-white/15 bg-slate-950/45 px-3 py-2 text-white" value={sortKey} onChange={(e) => setSortKey(e.target.value)}>
+                      <option value="created_at">Orden: fecha</option>
+                      <option value="nombre_completo">Orden: cliente</option>
+                      <option value="estado">Orden: estado</option>
+                      <option value="service_code">Orden: servicio</option>
+                    </select>
+                    <select className="rounded-lg border border-white/15 bg-slate-950/45 px-3 py-2 text-white" value={sortDir} onChange={(e) => setSortDir(e.target.value)}>
+                      <option value="desc">Descendente</option>
+                      <option value="asc">Ascendente</option>
+                    </select>
+                    <select className="rounded-lg border border-white/15 bg-slate-950/45 px-3 py-2 text-white" value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}>
+                      <option value={10}>10 por pagina</option>
+                      <option value={20}>20 por pagina</option>
+                      <option value={50}>50 por pagina</option>
+                    </select>
+                  </div>
+                )}
+                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-white/10 pt-3">
+                  <Button type="button" className="bg-white/10 text-white hover:bg-white/20" onClick={saveFilters}>Guardar filtros</Button>
+                  <Button type="button" className="bg-white/10 text-white hover:bg-white/20" onClick={clearFilters}>Limpiar</Button>
+                  <Button type="button" className="bg-sky-600 text-white hover:bg-sky-500" onClick={exportCsv}>Exportar CSV</Button>
+                  <span className="ml-auto text-xs text-slate-400">{sortedCases.length} resultados</span>
                 </div>
               </div>
             )}
 
-            {isAdmin && (
-              <div className="bg-white/10 border border-white/10 rounded-2xl p-4">
-                <h3 className="text-lg font-semibold mb-3">Carga masiva de casos por CSV</h3>
+            {isAdmin && adminImportOpen && (
+              <div className="rounded-2xl border border-amber-300/25 bg-slate-900/50 p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-semibold">Importar casos</h3>
+                    <p className="mt-1 text-xs text-slate-400">Carga CSV o Excel y asigna los casos a un usuario empresa.</p>
+                  </div>
+                  <span className="rounded-full border border-amber-300/30 bg-amber-400/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-200">Carga masiva</span>
+                </div>
                 <form onSubmit={handleImportCases} className="grid md:grid-cols-4 gap-3 items-end">
                   {isAdmin ? (
                     <div className="md:col-span-2">
@@ -1739,10 +2198,10 @@ export default function Dashboard() {
                     </div>
                   )}
                   <div>
-                    <label className="text-xs text-slate-300">Archivos (CSV / Excel)</label>
+                    <label className="text-xs text-slate-300">Archivos (CSV / XLSX)</label>
                     <input
                       type="file"
-                      accept=".csv,.xlsx,.xls,.ods,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.oasis.opendocument.spreadsheet"
+                      accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                       multiple
                       className="mt-1 w-full rounded-lg bg-white/10 border border-white/10 px-3 py-2 text-white"
                       onChange={handleImportFileChange}
@@ -1753,7 +2212,7 @@ export default function Dashboard() {
                   </div>
                   <Button
                     type="submit"
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                    className="bg-sky-600 hover:bg-sky-500 text-white"
                     disabled={importing}
                   >
                     {importing ? "Importando..." : "Importar casos"}
@@ -1774,203 +2233,73 @@ export default function Dashboard() {
               </div>
             )}
 
+            {!isPublicCreateMode && error && (
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-400/30 bg-rose-500/10 px-4 py-3" role="alert">
+                <p className="text-sm text-rose-200">{error}</p>
+                <Button type="button" className="bg-white/10 text-white hover:bg-white/20" onClick={loadCases} disabled={loading}>
+                  Reintentar
+                </Button>
+              </div>
+            )}
             {loading && <p className="text-slate-300">Cargando casos...</p>}
-            {!loading && (isAdmin ? sortedCases.length === 0 : visibleCases.length === 0) && (
-              <p className="text-slate-300">{isAdmin ? "Panel administrador: revisa y actualiza todos los reclamos." : isEnterprise ? "Panel empresa: organiza y clasifica casos con estado y prioridad." : "Carga nuevos reclamos y sigue el estado."}</p>
+            {!loading && !isCreateCasePage && (isAdmin ? sortedCases.length === 0 : visibleCases.length === 0) && (
+              <p className="text-slate-300">{isAdmin ? "No hay casos que coincidan con los filtros actuales." : isEnterprise ? "Panel empresa: organiza y clasifica casos con estado y prioridad." : "Carga nuevos reclamos y sigue el estado."}</p>
             )}
 
             {!loading && isAdmin && sortedCases.length > 0 && (
-              <div className="bg-white/10 border border-white/10 rounded-2xl overflow-hidden">
+              <div className={`rfa-admin-case-list overflow-hidden rounded-2xl border border-white/10 bg-slate-900/35 shadow-xl shadow-slate-950/20 ${expandedCaseId ? "rfa-admin-list-focused" : ""}`}>
                 <div className="overflow-auto">
-                  <table className="w-full min-w-[1180px] border-collapse">
-                    <thead>
-                      <tr className="text-left text-xs uppercase tracking-wide text-slate-300 border-b border-white/10">
-                        <th className="px-4 py-3">
-                          <button type="button" className="uppercase tracking-wide" onClick={() => handleSort("nombre_completo")}>
-                            Cliente {sortKey === "nombre_completo" ? (sortDir === "asc" ? "?" : "?") : ""}
-                          </button>
-                        </th>
-                        <th className="px-4 py-3">Codigo</th>
-                        <th className="px-4 py-3">Empresa</th>
-                        <th className="px-4 py-3">Contacto</th>
-                        <th className="px-4 py-3">Entidad</th>
-                        <th className="px-4 py-3">Monto</th>
-                        <th className="px-4 py-3">
-                          <button type="button" className="uppercase tracking-wide" onClick={() => handleSort("plan_elegido")}>
-                            Plan {sortKey === "plan_elegido" ? (sortDir === "asc" ? "?" : "?") : ""}
-                          </button>
-                        </th>
-                        <th className="px-4 py-3">
-                          <button type="button" className="uppercase tracking-wide" onClick={() => handleSort("estado")}>
-                            Estado {sortKey === "estado" ? (sortDir === "asc" ? "?" : "?") : ""}
-                          </button>
-                        </th>
-                        <th className="px-4 py-3">
-                          <button type="button" className="uppercase tracking-wide" onClick={() => handleSort("prioridad")}>
-                            Prioridad {sortKey === "prioridad" ? (sortDir === "asc" ? "?" : "?") : ""}
-                          </button>
-                        </th>
-                        <th className="px-4 py-3">Riesgo</th>
-                        <th className="px-4 py-3">
-                          <button type="button" className="uppercase tracking-wide" onClick={() => handleSort("created_at")}>
-                            Fecha {sortKey === "created_at" ? (sortDir === "asc" ? "?" : "?") : ""}
-                          </button>
-                        </th>
-                        <th className="px-4 py-3">Accion</th>
+                  <table className="w-full min-w-[760px] border-collapse">
+                    <thead className="bg-slate-950/45">
+                      <tr className="border-b border-white/10 text-left text-[11px] uppercase tracking-wide text-slate-400">
+                        <th className="sticky left-0 z-10 bg-slate-950/90 px-3 py-3">Caso</th>
+                        <th className="px-3 py-3"><button type="button" className="uppercase tracking-wide" onClick={() => handleSort("nombre_completo")}>Cliente / reclamo</button></th>
+                        <th className="px-3 py-3"><button type="button" className="uppercase tracking-wide" onClick={() => handleSort("estado")}>Estado</button></th>
+                        <th className="px-3 py-3">Atención</th>
+                        <th className="px-3 py-3"><button type="button" className="uppercase tracking-wide" onClick={() => handleSort("updated_at")}>Última actividad</button></th>
+                        <th className="px-3 py-3 text-right">Acción</th>
                       </tr>
                     </thead>
                     <tbody>
                       {paginatedCases.map((c) => (
                         <Fragment key={c.id}>
-                          <tr
-                            className={`border-b border-white/10 align-top ${
-                              isNewCase(c) ? "bg-emerald-500/10" : ""
-                            }`}
-                          >
-                            <td className="px-4 py-3">
-                              <div className="flex items-center gap-2">
+                          <tr className={`rfa-admin-case-row border-b border-white/10 align-top ${expandedCaseId === c.id ? "rfa-admin-case-row-active" : ""} ${isNewCase(c) ? "bg-emerald-500/10" : ""}`}>
+                            <td className="px-3 py-3">
+                              <p className="text-sm font-medium text-slate-100">{c.case_code || c.id}</p>
+                              <p className="mt-1 text-xs text-slate-400">{formatDateTimeAr(c.created_at)}</p>
+                            </td>
+                            <td className="px-3 py-3">
+                              <div className="flex flex-wrap items-center gap-2">
                                 <p className="text-sm text-slate-100">{c.nombre_completo || "Sin nombre"}</p>
-                                {isNewCase(c) && (
-                                  <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide bg-emerald-500/20 text-emerald-200">
-                                    Nuevo
-                                  </span>
-                                )}
-                                {!normalizeRiskValue(c.riesgo) && (
-                                  <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide bg-amber-500/25 text-amber-200">
-                                    Sin clasificar
-                                  </span>
-                                )}
+                                {isNewCase(c) && <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-200">Nuevo</span>}
                               </div>
-                              <p className="text-xs text-slate-400">{c.dni_cuit || "-"}</p>
+                              <p className="mt-1 max-w-[220px] truncate text-xs text-slate-400">{getCaseContactEmail(c) || c.dni_cuit || "Sin contacto"}</p>
+                              <p className="mt-2 text-xs text-slate-300">{c.entidad || "Entidad no informada"} <span className="text-slate-500">·</span> {c.categoria || "Sin categoría"}</p>
+                              <p className="mt-1 text-[11px] text-slate-500">{c.enterprise_user_id ? "Empresa" : "RFA directo"}</p>
+                              {adminCaseSourceFilter === "rfa" && <p className="mt-1 text-[11px] text-slate-500">Servicio: {getServiceDisplayName(getCaseServiceValue(c) || analysisService.code)}</p>}
                             </td>
-                            <td className="px-4 py-3 text-sm text-slate-200">{c.case_code || "-"}</td>
-                            <td className="px-4 py-3 text-sm text-slate-200">{c.empresa || c.enterprise_email || "-"}</td>
-                            <td className="px-4 py-3">
-                              <p className="text-sm text-slate-200">{getCaseContactEmail(c) || "Sin email"}</p>
-                              <p className="text-xs text-slate-400">{c.telefono || "-"}</p>
-                            </td>
-                            <td className="px-4 py-3">
-                              <p className="text-sm text-slate-200">{c.entidad || "-"}</p>
-                              <p className="text-xs text-slate-400">{c.tipo_entidad || "-"}</p>
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className={`inline-flex px-2 py-1 rounded-full text-xs font-semibold ${getMontoBadge(c.monto_moneda, c.monto_escala).className}`}>
-                                {getMontoBadge(c.monto_moneda, c.monto_escala).label}
+                            <td className="px-3 py-3"><span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${getStatusBadge(c.estado)}`}>{getOperationalStatusLabel(c.estado)}</span></td>
+                            <td className="px-3 py-3">
+                              <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${isAdminAttentionCase(c) ? "bg-amber-500/25 text-amber-100" : "bg-white/10 text-slate-300"}`}>
+                                {isAdminAttentionCase(c) ? "Requiere atención" : "Normal"}
                               </span>
-                              <p className="text-xs text-slate-400 mt-1">{c.monto_valor || "-"}</p>
+                              <p className="mt-1 text-[11px] text-slate-500">P: {c.prioridad || "Pendiente"} · R: {normalizeRiskValue(c.riesgo) || "Pendiente"}</p>
                             </td>
-                            <td className="px-4 py-3 text-sm text-slate-200">{c.plan_elegido || "Sin plan"}</td>
-                            <td className="px-4 py-3">
-                              <span className={`inline-flex px-2 py-1 rounded-full text-xs font-semibold ${getStatusBadge(c.estado)}`}>
-                                {c.estado}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className={`inline-flex px-2 py-1 rounded-full text-xs font-semibold ${getPriorityBadge(c.prioridad)}`}>
-                                {c.prioridad || "Pendiente"}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className={`inline-flex px-2 py-1 rounded-full text-xs font-semibold ${
-                                normalizeRiskValue(c.riesgo)
-                                  ? getRiskBadge(normalizeRiskValue(c.riesgo))
-                                  : "bg-amber-500/25 text-amber-200"
-                              }`}>
-                                {normalizeRiskValue(c.riesgo) || "Sin clasificar"}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-xs text-slate-400">
-                              {formatDateAr(c.created_at)}
-                            </td>
-                            <td className="px-4 py-3">
-                              <div className="flex flex-col gap-2">
-                                <Button
-                                  className="bg-white/10 hover:bg-white/20 text-white"
-                                  onClick={() => handleToggleUpdates(c.id)}
-                                >
-                                  {expandedCaseId === c.id ? "Cerrar" : "Gestionar"}
-                                </Button>
-                                <Button
-                                  className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-100"
-                                  onClick={() => handleToggleCaseDetails(c.id)}
-                                >
-                                  {expandedCaseDetailId === c.id ? "Ocultar caso" : "Ver caso"}
-                                </Button>
-                              </div>
+                            <td className="px-3 py-3 text-xs text-slate-300">{formatDateTimeAr(c.updated_at || c.created_at)}</td>
+                            <td className="px-3 py-3 text-right">
+                              <Button type="button" className="bg-transparent px-2 py-1 text-xs text-sky-300 hover:bg-white/10 hover:text-white" onClick={() => handleToggleUpdates(c.id)}>{expandedCaseId === c.id ? "Cerrar" : "Abrir →"}</Button>
                             </td>
                           </tr>
-                          {expandedCaseDetailId === c.id && (
-                            <tr className="border-b border-white/10 bg-white/5">
-                              <td colSpan={12} className="px-4 py-4">
-                                <div className="grid md:grid-cols-2 gap-4 text-sm text-slate-300">
-                                  <div>
-                                    <p className="text-slate-400 text-xs uppercase mb-1">Resumen</p>
-                                    <p className="text-slate-200">{c.relato || c.detalle || "-"}</p>
-                                  </div>
-                                  <div className="space-y-2">
-                                    <div>
-                                      <p className="text-slate-400 text-xs uppercase mb-1">Contacto</p>
-                                      <p>{getCaseContactEmail(c) || "-"}</p>
-                                      <p className="text-xs text-slate-400">{c.telefono || "-"}</p>
-                                    </div>
-                                    <div>
-                                      <p className="text-slate-400 text-xs uppercase mb-1">Plan elegido</p>
-                                      <p>{c.plan_elegido || "Sin plan"}</p>
-                                    </div>
-                                  </div>
-                                  <div>
-                                    <p className="text-slate-400 text-xs uppercase mb-1">Monto</p>
-                                    <p>
-                                      {c.monto_moneda || "-"} {c.monto_escala || ""} {c.monto_valor || ""}
-                                    </p>
-                                  </div>
-                                  <div>
-                                    <p className="text-slate-400 text-xs uppercase mb-1">Autorizacion</p>
-                                    <p>{Number(c.autorizacion) === 1 ? "Si" : "No"}</p>
-                                  </div>
-                                  <div>
-                                    <p className="text-slate-400 text-xs uppercase mb-1">Medios de pago</p>
-                                    <p>{parseArray(c.medios_pago).join(", ") || "-"}</p>
-                                  </div>
-                                  <div>
-                                    <p className="text-slate-400 text-xs uppercase mb-1">Adjuntos</p>
-                                    <div className="space-y-2">
-                                      {parseArray(c.adjuntos).length === 0 && (
-                                        <p className="text-xs text-slate-300">Sin adjuntos</p>
-                                      )}
-                                      {parseArray(c.adjuntos).map((file) => (
-                                        <div
-                                          key={file.filename || file.originalName}
-                                          className="flex items-center justify-between gap-2 rounded-md border border-white/10 px-2 py-1"
-                                        >
-                                          <span className="text-xs text-slate-300 truncate">
-                                            {file.originalName || file.filename}
-                                          </span>
-                                          <Button
-                                            className="bg-white/10 hover:bg-white/20 text-white text-xs px-2 py-1 h-auto"
-                                            onClick={() => handleDownloadAttachment(c.id, file)}
-                                          >
-                                            Descargar
-                                          </Button>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                </div>
-                              </td>
-                            </tr>
-                          )}
                           {expandedCaseId === c.id && (
-                            <tr className="border-b border-white/10 bg-white/5">
-                              <td colSpan={12} className="px-4 py-4">
-                                {renderAdminManagementPanel(c)}
-                              </td>
+                            <tr className="rfa-admin-case-detail-row border-b border-white/10 bg-slate-950/40">
+                              <td colSpan={6} className="px-4 py-5">{renderAdminCasePanel(c)}</td>
                             </tr>
                           )}
                         </Fragment>
                       ))}
                     </tbody>
                   </table>
+
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-white/10 text-sm text-slate-300">
                   <span>
@@ -2001,9 +2330,9 @@ export default function Dashboard() {
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <span className={`inline-flex mt-1 px-2 py-1 rounded-full text-xs font-semibold ${getStatusBadge(c.estado)}`}>
-                      {c.estado}
+                      {getOperationalStatusLabel(c.estado)}
                     </span>
-                    {c.plan_elegido && <p className="text-xs text-slate-400 mt-1">Plan: {c.plan_elegido}</p>}
+                    {getCaseServiceValue(c) && <p className="text-xs text-slate-400 mt-1">Servicio: {getServiceDisplayName(getCaseServiceValue(c))}</p>}
                     <p className="text-xs text-slate-400 mt-1">{formatDateAr(c.created_at)}</p>
                   </div>
                   <Button
@@ -2034,48 +2363,6 @@ export default function Dashboard() {
                         </div>
                       </div>
                     ))}
-                    {c.estado === "Viable (pendiente de pago)" && c.plan_elegido && findPlanByName(c.plan_elegido) && (
-                      <div className="border border-white/10 rounded-xl p-4 bg-white/5">
-                        <p className="text-sm text-slate-300 mb-3">
-                          Tu caso es viable. Continua el proceso con el pago del plan.
-                        </p>
-                        <div className="flex flex-wrap gap-3">
-                          <Button
-                            className="bg-emerald-500 hover:bg-emerald-600 text-white"
-                            onClick={() => setTransferPlanId((prev) => (prev === c.id ? null : c.id))}>
-                            Contratar plan
-                          </Button>
-                          <Button
-                            className="bg-white/10 hover:bg-white/20 text-white"
-                            onClick={() => setInfoPlanId((prev) => (prev === c.id ? null : c.id))}>
-                            Mas informacion
-                          </Button>
-                        </div>
-                        {transferPlanId === c.id && (
-                          <div className="mt-3 rounded-lg border border-emerald-400/30 bg-emerald-500/10 p-3 text-xs text-emerald-100 space-y-1">
-                            <p><strong>Titular:</strong> {BANK_TRANSFER.titular}</p>
-                            <p><strong>Banco:</strong> {BANK_TRANSFER.banco}</p>
-                            <p><strong>CBU:</strong> {BANK_TRANSFER.cbu}</p>
-                            <p><strong>Alias:</strong> {BANK_TRANSFER.alias}</p>
-                            <p className="text-emerald-200/90">{BANK_TRANSFER.referencia}</p>
-
-                          </div>
-                        )}
-                        {infoPlanId === c.id && (
-                          <div className="mt-3 rounded-lg border border-white/15 bg-white/5 p-3 text-xs text-slate-200">
-                            <p className="mb-2 font-semibold text-emerald-300">Trabajo detallado del plan</p>
-                            {findPlanByName(c.plan_elegido)?.summary && (
-                              <p className="mb-2 text-slate-300 leading-relaxed">{findPlanByName(c.plan_elegido)?.summary}</p>
-                            )}
-                            <ul className="space-y-1">
-                              {(findPlanByName(c.plan_elegido)?.details || []).map((item) => (
-                                <li key={item}>• {item}</li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
@@ -2170,7 +2457,6 @@ export default function Dashboard() {
                       <col style={{ width: enterpriseColumnWidths.dias }} />
                       <col style={{ width: enterpriseColumnWidths.ultima }} />
                       <col style={{ width: enterpriseColumnWidths.obsEmpresa }} />
-                      <col style={{ width: enterpriseColumnWidths.obsRfa }} />
                       <col style={{ width: enterpriseColumnWidths.accion }} />
                     </colgroup>
                     <thead>
@@ -2186,7 +2472,6 @@ export default function Dashboard() {
                         <th className="px-4 py-3 relative">Días abiertos<div className="absolute top-0 right-0 h-full w-2 cursor-col-resize" onMouseDown={(e) => startEnterpriseColumnResize("dias", e)} /></th>
                         <th className="px-4 py-3 relative">Última actualización<div className="absolute top-0 right-0 h-full w-2 cursor-col-resize" onMouseDown={(e) => startEnterpriseColumnResize("ultima", e)} /></th>
                         <th className="px-4 py-3 relative">Observaciones internas (empresa)<div className="absolute top-0 right-0 h-full w-2 cursor-col-resize" onMouseDown={(e) => startEnterpriseColumnResize("obsEmpresa", e)} /></th>
-                        <th className="px-4 py-3 relative">Comentarios RFA<div className="absolute top-0 right-0 h-full w-2 cursor-col-resize" onMouseDown={(e) => startEnterpriseColumnResize("obsRfa", e)} /></th>
                         <th className="px-4 py-3 relative">Acción<div className="absolute top-0 right-0 h-full w-2 cursor-col-resize" onMouseDown={(e) => startEnterpriseColumnResize("accion", e)} /></th>
                       </tr>
                     </thead>
@@ -2262,11 +2547,6 @@ export default function Dashboard() {
                               />
                             </td>
                             <td className="px-4 py-3">
-                              <div className="w-full min-w-[260px] rounded-lg bg-slate-900/40 border border-white/10 px-3 py-2 text-xs text-slate-200 whitespace-pre-wrap">
-                                {c.observaciones_rfa || "-"}
-                              </div>
-                            </td>
-                            <td className="px-4 py-3">
                               <div className="flex flex-wrap gap-2">
                                 <Button
                                   className="bg-emerald-500 hover:bg-emerald-600 text-white"
@@ -2286,7 +2566,7 @@ export default function Dashboard() {
                           </tr>
                           {expandedEnterpriseCaseDetailId === c.id && (
                             <tr className="border-b border-white/10 bg-white/5">
-                              <td colSpan={13} className="px-4 py-4">
+                              <td colSpan={12} className="px-4 py-4">
                                 <div className="grid md:grid-cols-2 gap-4 text-sm text-slate-300">
                                   <div><span className="text-slate-400">Codigo:</span> {c.case_code || "-"}</div>
                                   <div><span className="text-slate-400">Caso ID:</span> {c.id}</div>
@@ -2305,10 +2585,6 @@ export default function Dashboard() {
                                   <div className="md:col-span-2">
                                     <span className="text-slate-400">Observaciones internas (empresa):</span>
                                     <p className="mt-1 whitespace-pre-wrap leading-relaxed">{c.observaciones_empresa || "-"}</p>
-                                  </div>
-                                  <div className="md:col-span-2">
-                                    <span className="text-slate-400">Comentarios RFA:</span>
-                                    <p className="mt-1 whitespace-pre-wrap leading-relaxed">{c.observaciones_rfa || "-"}</p>
                                   </div>
                                   <div className="md:col-span-2">
                                     <span className="text-slate-400">Reclamo:</span>
@@ -2391,18 +2667,21 @@ export default function Dashboard() {
 
                 <div className="bg-white/10 border border-white/10 rounded-2xl p-5 space-y-4">
                   <div className="flex items-center justify-between gap-3">
-                    <h3 className="text-lg font-semibold">Planes y pagos</h3>
-                    <p className="text-xs text-slate-400">Primer contacto y análisis: sin cargo</p>
+                    <h3 className="text-lg font-semibold">Modalidades de servicio</h3>
+                    <p className="text-xs text-slate-400">Análisis inicial sin costo</p>
                   </div>
+                  <p className="text-sm text-slate-300">
+                    Primero revisamos el caso. Si podemos intervenir, informamos el alcance y el precio antes de comenzar cualquier servicio pago.
+                  </p>
                   <div className="grid md:grid-cols-2 gap-4">
                     {plans.map((plan) => (
-                      <div key={plan.name} className="border border-white/10 rounded-xl p-4 bg-white/5">
+                      <div key={plan.code} className="border border-white/10 rounded-xl p-4 bg-white/5">
                         <p className="text-sm text-emerald-300 font-semibold">{plan.name}</p>
                         {plan.summary && (
                           <p className="text-xs text-slate-300 mt-2 leading-relaxed">{plan.summary}</p>
                         )}
-                        <p className="text-2xl font-bold mt-1">{plan.price}</p>
-                        {plan.priceUsd && <p className="text-xs text-slate-400">{plan.priceUsd}</p>}
+                        <p className="text-2xl font-bold mt-1">{plan.priceLabel}</p>
+                        <p className="text-xs text-slate-400">{plan.currency}</p>
                         <p className="text-xs text-slate-400 mb-3">{plan.period}</p>
                         <ul className="space-y-1 text-xs text-slate-300 mb-4">
                           {plan.features.map((item) => (
@@ -2411,30 +2690,15 @@ export default function Dashboard() {
                         </ul>
                         <div className="flex gap-2">
                           <Button
-                            className="bg-emerald-500 hover:bg-emerald-600 text-white w-full"
-                            onClick={() => setTransferPlanId((prev) => (prev === plan.id ? null : plan.id))}
-                          >
-                            Contratar plan
-                          </Button>
-                          <Button
                             className="bg-slate-900 hover:bg-slate-800 text-white w-full"
                             onClick={() => setInfoPlanId((prev) => (prev === plan.id ? null : plan.id))}
                           >
                             Mas informacion
                           </Button>
                         </div>
-                        {transferPlanId === plan.id && (
-                          <div className="mt-3 rounded-lg border border-emerald-400/30 bg-emerald-500/10 p-3 text-xs text-emerald-100 space-y-1">
-                            <p><strong>Titular:</strong> {BANK_TRANSFER.titular}</p>
-                            <p><strong>Banco:</strong> {BANK_TRANSFER.banco}</p>
-                            <p><strong>CBU:</strong> {BANK_TRANSFER.cbu}</p>
-                            <p><strong>Alias:</strong> {BANK_TRANSFER.alias}</p>
-                            <p className="text-emerald-200/90">{BANK_TRANSFER.referencia}</p>
-                          </div>
-                        )}
                         {infoPlanId === plan.id && (
                           <div className="mt-3 rounded-lg border border-white/15 bg-white/5 p-3 text-xs text-slate-200">
-                            <p className="mb-2 font-semibold text-emerald-300">Trabajo detallado del plan</p>
+                            <p className="mb-2 font-semibold text-emerald-300">Detalle del servicio</p>
                             {plan.summary && <p className="mb-2 text-slate-300 leading-relaxed">{plan.summary}</p>}
                             <ul className="space-y-1">
                               {(plan.details || []).map((item) => (
@@ -2450,7 +2714,7 @@ export default function Dashboard() {
               </>
             )}
 
-            {!loading && isAdmin && (
+            {!loading && isAdmin && adminCaseSourceFilter === "empresa" && (
               <div className="bg-white/10 border border-white/10 rounded-2xl p-5 space-y-4">
                 <h2 className="text-xl font-semibold">Generar usuario empresa</h2>
                 <form onSubmit={handleCreateEnterpriseUser} className="grid md:grid-cols-[1fr_1fr_auto] gap-3">
@@ -2511,7 +2775,7 @@ export default function Dashboard() {
                           <th className="px-4 py-3">Código</th>
                           <th className="px-4 py-3">Cliente</th>
                           <th className="px-4 py-3">Email</th>
-                          <th className="px-4 py-3">Plan</th>
+                          <th className="px-4 py-3">Servicio</th>
                           <th className="px-4 py-3">Cargado</th>
                           <th className="px-4 py-3">Acción</th>
                         </tr>
@@ -2522,7 +2786,7 @@ export default function Dashboard() {
                             <td className="px-4 py-3 text-sm text-slate-200">{c.case_code || c.id}</td>
                             <td className="px-4 py-3 text-sm text-slate-100">{c.nombre_completo || "Sin nombre"}</td>
                             <td className="px-4 py-3 text-sm text-slate-200">{getCaseContactEmail(c) || "-"}</td>
-                            <td className="px-4 py-3 text-sm text-slate-200">{c.plan_elegido || "-"}</td>
+                            <td className="px-4 py-3 text-sm text-slate-200">{getServiceDisplayName(getCaseServiceValue(c)) || "-"}</td>
                             <td className="px-4 py-3 text-xs text-slate-400">
                               {c.payment_receipt_uploaded_at
                                 ? formatDateTimeAr(c.payment_receipt_uploaded_at)
