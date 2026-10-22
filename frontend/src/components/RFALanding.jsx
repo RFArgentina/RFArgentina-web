@@ -26,21 +26,13 @@ const RFALanding = () => {
   const navigate = useNavigate();
   const [openFaqIndex, setOpenFaqIndex] = React.useState(null);
   const isAuthenticated = Boolean(getToken());
+  const whatsappSupportNumber = String(process.env.REACT_APP_WHATSAPP_SUPPORT || "").replace(/\D/g, "");
   // ---- CTA: abre el formulario (gratis) en pestaña nueva ----
   const handleCTAClick = () => {
     navigate(isAuthenticated ? "/panel" : "/crear-caso");
   };
  
   
-  const handleServiceOptionsClick = () => {
-    const el = document.getElementById("modalidades");
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
-      return;
-    }
-    navigate(isAuthenticated ? "/panel" : "/planes");
-  };
-
   // ---- Pasos de trabajo ----
   const steps = [
     {
@@ -217,12 +209,6 @@ const services = [
                 </Button>
                 <Button
                   className="bg-white/10 hover:bg-white/20 text-white font-semibold py-3 px-6 rounded-lg border border-white/20"
-                  onClick={handleServiceOptionsClick}
-                >
-                  Ver opciones de servicio
-                </Button>
-                <Button
-                  className="bg-white/10 hover:bg-white/20 text-white font-semibold py-3 px-6 rounded-lg border border-white/20"
                   onClick={() => navigate("/empresas")}
                 >
                   Servicios para empresas
@@ -380,7 +366,7 @@ const services = [
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl font-bold text-emerald-300 mb-6">Dos modalidades de servicio</h2>
             <p className="text-slate-300 max-w-3xl mx-auto">
-              Podés elegir una carpeta profesional para continuar por tu cuenta o una modalidad con acompañamiento administrativo.
+              Podés elegir una carpeta profesional para continuar por tu cuenta o una modalidad con acompañamiento administrativo. RFA puede gestionar las comunicaciones dentro del alcance acordado o preparar los mensajes para que el cliente los envíe desde sus propias cuentas o canales cuando corresponda.
             </p>
           </div>
           <div className="grid md:grid-cols-2 gap-8 max-w-6xl mx-auto">
@@ -594,16 +580,18 @@ const services = [
                 </a>
               </p>
 
-              <p className="text-sm">
-                <a
-                  href="https://wa.me/542212024379"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="hover:text-emerald-300 transition"
-                >
-                  WhatsApp: +54 221 202 4379
-                </a>
-              </p>
+              {whatsappSupportNumber.length >= 10 && (
+                <p className="text-sm">
+                  <a
+                    href={`https://wa.me/${whatsappSupportNumber}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:text-emerald-300 transition"
+                  >
+                    WhatsApp
+                  </a>
+                </p>
+              )}
             </div>
             <div>
               <h3 className="text-lg font-semibold mb-4">Seguinos</h3>

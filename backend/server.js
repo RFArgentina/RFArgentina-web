@@ -17,6 +17,16 @@ import { randomBytes, randomInt, randomUUID, createHash } from "crypto";
 import multer from "multer";
 import { Worker } from "worker_threads";
 import { migratePersistentDisk } from "./persistent-disk-migration.js";
+import {
+  createConversationAccessToken,
+  hashConversationAccessToken,
+  isConversationAccessTokenActive
+} from "./conversation-access.js";
+import {
+  isValidCommunicationMode,
+  parseAcceptedProposalSnapshot,
+  serializeAcceptedProposalSnapshot
+} from "./commercial-proposal.js";
 
 dotenv.config();
 
@@ -240,6 +250,10 @@ const publicActionLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false,
   message: { error: "No se pudo completar la solicitud. Intenta nuevamente en unos minutos" }
 });
+const publicActionGrantLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false,
+  message: { error: "No se pudo completar la solicitud. Intenta nuevamente en unos minutos" }
+});
 const publicReceiptLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false,
   message: { error: "No se pudo completar la solicitud. Intenta nuevamente en unos minutos" }
@@ -260,6 +274,18 @@ const authenticatedUploadLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false,
   message: { error: "Demasiadas cargas de archivos. Intenta nuevamente en unos minutos" }
 });
+const conversationReadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 60, standardHeaders: true, legacyHeaders: false,
+  message: { error: "No se pudo completar la solicitud. Intenta nuevamente en unos minutos" }
+});
+const conversationWriteLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 6, standardHeaders: true, legacyHeaders: false,
+  message: { error: "No se pudo completar la solicitud. Intenta nuevamente en unos minutos" }
+});
+const conversationAdminWriteLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false,
+  message: { error: "No se pudo completar la solicitud. Intenta nuevamente en unos minutos" }
+});
 
 app.use(cors({
   origin(origin, cb) {
@@ -268,7 +294,7 @@ app.use(cors({
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-CSRF-Token"]
+  allowedHeaders: ["Content-Type", "Authorization", "X-CSRF-Token", "X-RFA-Conversation-Token"]
 }));
 app.use(globalLimiter);
 app.use(express.json({ limit: "1mb" }));
@@ -361,6 +387,21 @@ function maybeUpload(req, res, next) {
   });
 }
 
+function conversationUpload(req, res, next) {
+  if (!req.is("multipart/form-data")) return next();
+  return upload.array("adjuntos", CASE_ATTACHMENT_MAX_FILES)(req, res, (err) => {
+    if (err) return next(err);
+    const files = req.files || [];
+    const validationError = validateUploadedFiles(files);
+    if (validationError) {
+      files.forEach(deleteUploadedFile);
+      req.files = [];
+      return res.status(validationError.includes("total de archivos") ? 413 : 400).json({ error: validationError });
+    }
+    return next();
+  });
+}
+
 function publicCaseUpload(req, res, next) {
   if (!req.is("multipart/form-data")) return next();
 
@@ -381,39 +422,29 @@ function publicCaseUpload(req, res, next) {
 
 function persistDb() {
   if (!db) return;
-  const data = db.export();
+  const data = Buffer.from(db.export());
   const tmpPath = `${DB_PATH}.tmp`;
   const bakPath = `${DB_PATH}.bak`;
+  const preservedBackup = fs.existsSync(bakPath);
+  const previousPath = preservedBackup ? `${DB_PATH}.previous-${randomUUID()}` : bakPath;
 
   // Escritura atómica (aprox) en Windows:
   // 1) write tmp
   // 2) si existe DB, renombrar a .bak
   // 3) renombrar tmp a DB
   // 4) eliminar .bak
-  fs.writeFileSync(tmpPath, Buffer.from(data));
+  fs.writeFileSync(tmpPath, data);
   if (fs.existsSync(DB_PATH)) {
-    try {
-      if (fs.existsSync(bakPath)) fs.unlinkSync(bakPath);
-    } catch (_e) {
-      // noop
-    }
-    try {
-      fs.renameSync(DB_PATH, bakPath);
-    } catch (_e) {
-      // Si no se puede renombrar, intentamos sobreescritura directa (menos seguro, pero evita caida)
-      fs.writeFileSync(DB_PATH, Buffer.from(data));
-      try { fs.unlinkSync(tmpPath); } catch (_e2) {}
-      return;
-    }
+    fs.renameSync(DB_PATH, previousPath);
   }
 
   try {
     fs.renameSync(tmpPath, DB_PATH);
   } catch (_e) {
-    // Fallback: restaurar bak si existe
+    // Fallback: restaurar la DB anterior si existe.
     try {
-      if (fs.existsSync(bakPath) && !fs.existsSync(DB_PATH)) {
-        fs.renameSync(bakPath, DB_PATH);
+      if (fs.existsSync(previousPath) && !fs.existsSync(DB_PATH)) {
+        fs.renameSync(previousPath, DB_PATH);
       }
     } catch (_e2) {
       // noop
@@ -421,10 +452,9 @@ function persistDb() {
     throw _e;
   }
 
-  try {
-    if (fs.existsSync(bakPath)) fs.unlinkSync(bakPath);
-  } catch (_e) {
-    // noop
+  if (!fs.readFileSync(DB_PATH).equals(data)) throw new Error("SQLite persisted bytes differ from export");
+  if (fs.existsSync(previousPath)) {
+    try { fs.unlinkSync(previousPath); } catch (_e) { /* preserve recovery copy */ }
   }
 }
 
@@ -596,10 +626,102 @@ function initDb() {
     );
     CREATE INDEX IF NOT EXISTS idx_public_case_action_tokens_case_action
       ON public_case_action_tokens(case_id, action, expires_at);
+    CREATE TABLE IF NOT EXISTS case_conversations (
+      id TEXT PRIMARY KEY,
+      case_id TEXT NOT NULL UNIQUE,
+      enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+      pending_admin_attention INTEGER NOT NULL DEFAULT 0 CHECK (pending_admin_attention IN (0, 1)),
+      client_reply_enabled INTEGER NOT NULL DEFAULT 0 CHECK (client_reply_enabled IN (0, 1)),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(case_id) REFERENCES cases(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS case_service_offers (
+      id TEXT PRIMARY KEY,
+      case_id TEXT NOT NULL,
+      service_code TEXT NOT NULL CHECK (service_code IN ('professional-folder', 'rfa-management')),
+      quoted_amount INTEGER NOT NULL CHECK (quoted_amount > 0),
+      quoted_currency TEXT NOT NULL CHECK (quoted_currency IN ('ARS', 'USD')),
+      quoted_scope TEXT NOT NULL,
+      available_communication_modes TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL CHECK (status IN ('published', 'withdrawn')),
+      created_by TEXT,
+      created_at TEXT NOT NULL,
+      published_at TEXT,
+      withdrawn_at TEXT,
+      FOREIGN KEY(case_id) REFERENCES cases(id) ON DELETE CASCADE,
+      FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_case_service_offers_case_status
+      ON case_service_offers(case_id, status, created_at);
+    CREATE TABLE IF NOT EXISTS case_payment_receipts (
+      id TEXT PRIMARY KEY,
+      case_id TEXT NOT NULL,
+      storage_filename TEXT NOT NULL UNIQUE,
+      original_filename TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+      uploaded_at TEXT NOT NULL,
+      verified_at TEXT,
+      verified_by TEXT,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'verified', 'rejected', 'superseded')),
+      FOREIGN KEY(case_id) REFERENCES cases(id) ON DELETE CASCADE,
+      FOREIGN KEY(verified_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_case_payment_receipts_case_uploaded
+      ON case_payment_receipts(case_id, uploaded_at DESC);
+    CREATE TABLE IF NOT EXISTS case_conversation_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      conversation_id TEXT NOT NULL,
+      sender_type TEXT NOT NULL CHECK (sender_type IN ('rfa', 'client')),
+      message_type TEXT NOT NULL CHECK (message_type IN ('prepared_message', 'received_reply')),
+      body TEXT NOT NULL,
+      channel TEXT,
+      author_user_id TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(conversation_id) REFERENCES case_conversations(id) ON DELETE CASCADE,
+      FOREIGN KEY(author_user_id) REFERENCES users(id) ON DELETE SET NULL,
+      CHECK ((sender_type = 'rfa' AND message_type = 'prepared_message') OR
+             (sender_type = 'client' AND message_type = 'received_reply'))
+    );
+    CREATE TABLE IF NOT EXISTS case_conversation_attachments (
+      id TEXT PRIMARY KEY,
+      message_id INTEGER NOT NULL,
+      storage_filename TEXT NOT NULL UNIQUE,
+      original_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(message_id) REFERENCES case_conversation_messages(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS case_conversation_access_tokens (
+      token_hash TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(conversation_id) REFERENCES case_conversations(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_case_conversation_messages_thread
+      ON case_conversation_messages(conversation_id, created_at, id);
+    CREATE INDEX IF NOT EXISTS idx_case_conversation_attachments_message
+      ON case_conversation_attachments(message_id);
+    CREATE INDEX IF NOT EXISTS idx_case_conversation_tokens_thread_expiry
+      ON case_conversation_access_tokens(conversation_id, expires_at);
     CREATE INDEX IF NOT EXISTS idx_security_events_created_at ON security_events(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_security_events_type ON security_events(event_type);
     CREATE INDEX IF NOT EXISTS idx_security_events_user_id ON security_events(user_id);
   `);
+  const conversationColumns = all("PRAGMA table_info(case_conversations)").map((column) => column.name);
+  if (!conversationColumns.includes("client_reply_enabled")) {
+    db.exec("ALTER TABLE case_conversations ADD COLUMN client_reply_enabled INTEGER NOT NULL DEFAULT 0 CHECK (client_reply_enabled IN (0, 1))");
+    for (const conversation of all("SELECT id, enabled FROM case_conversations WHERE enabled = 1")) {
+      const latestMessage = get(
+        "SELECT sender_type FROM case_conversation_messages WHERE conversation_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+        [conversation.id]
+      );
+      run("UPDATE case_conversations SET client_reply_enabled = ? WHERE id = ?", [latestMessage?.sender_type === "client" ? 0 : 1, conversation.id]);
+    }
+  }
   const columns = all("PRAGMA table_info(cases)").map((c) => c.name);
   const addColumn = (name, type) => {
     if (!columns.includes(name)) {
@@ -644,7 +766,26 @@ function initDb() {
   addColumn("commercial_status", "TEXT");
   addColumn("quoted_at", "TEXT");
   addColumn("proposal_accepted_at", "TEXT");
+  addColumn("communication_mode", "TEXT");
+  addColumn("accepted_proposal_snapshot", "TEXT");
   addColumn("payment_confirmed_at", "TEXT");
+  addColumn("commercial_flow_version", "INTEGER NOT NULL DEFAULT 1");
+  addColumn("selected_offer_id", "TEXT");
+  addColumn("customer_communication_mode", "TEXT");
+  for (const legacyReceipt of all("SELECT id, case_code, payment_receipt_filename, payment_receipt_original_name, payment_receipt_uploaded_at FROM cases WHERE payment_receipt_filename IS NOT NULL AND trim(payment_receipt_filename) <> ''")) {
+    const exists = get("SELECT id FROM case_payment_receipts WHERE storage_filename = ?", [path.basename(legacyReceipt.payment_receipt_filename)]);
+    if (exists) continue;
+    const filename = path.basename(legacyReceipt.payment_receipt_filename);
+    const filePath = path.join(UPLOADS_DIR, filename);
+    let size = 0;
+    try { size = fs.statSync(filePath).size; } catch { /* keep metadata even if legacy file is missing */ }
+    run(
+      `INSERT INTO case_payment_receipts
+       (id, case_id, storage_filename, original_filename, mime_type, size_bytes, uploaded_at, status)
+       VALUES (?, ?, ?, ?, 'application/octet-stream', ?, ?, 'pending')`,
+      [randomUUID(), legacyReceipt.id, filename, cleanText(legacyReceipt.payment_receipt_original_name, 255) || `comprobante_${legacyReceipt.case_code || legacyReceipt.id}`, size, legacyReceipt.payment_receipt_uploaded_at || new Date().toISOString()]
+    );
+  }
   const updatesColumns = all("PRAGMA table_info(case_updates)").map((c) => c.name);
   if (!updatesColumns.includes("prioridad")) {
     db.exec("ALTER TABLE case_updates ADD COLUMN prioridad TEXT;");
@@ -918,6 +1059,7 @@ function validateUploadedFiles(files, { totalLimit = PUBLIC_CASE_ATTACHMENT_MAX_
 
 function deleteCaseAttachments(rows = []) {
   rows.forEach((row) => {
+    const deletedReceiptFiles = new Set();
     parseAttachmentFilenames(row?.adjuntos).forEach((filename) => {
       const filePath = path.join(UPLOADS_DIR, filename);
       if (fs.existsSync(filePath)) {
@@ -929,16 +1071,21 @@ function deleteCaseAttachments(rows = []) {
       }
     });
     const paymentReceiptFilename = path.basename(String(row?.payment_receipt_filename || "").trim());
-    if (paymentReceiptFilename) {
-      const paymentReceiptPath = path.join(UPLOADS_DIR, paymentReceiptFilename);
+    if (paymentReceiptFilename) deletedReceiptFiles.add(paymentReceiptFilename);
+    all("SELECT storage_filename FROM case_payment_receipts WHERE case_id = ?", [row.id]).forEach((receipt) => {
+      const filename = path.basename(String(receipt.storage_filename || ""));
+      if (filename) deletedReceiptFiles.add(filename);
+    });
+    deletedReceiptFiles.forEach((filename) => {
+      const paymentReceiptPath = path.join(UPLOADS_DIR, filename);
       if (fs.existsSync(paymentReceiptPath)) {
         try {
           fs.unlinkSync(paymentReceiptPath);
         } catch (err) {
-          console.error("PURGE PAYMENT RECEIPT ERR:", paymentReceiptFilename, err.message);
+          console.error("PURGE PAYMENT RECEIPT ERR:", filename, err.message);
         }
       }
-    }
+    });
   });
 }
 
@@ -969,12 +1116,14 @@ function purgeExpiredClosedCases() {
   );
 
   if (userRows.length) {
+    deleteConversationAttachmentsForCases(userRows);
     deleteCaseAttachments(userRows);
     userRows.forEach((row) => run("DELETE FROM cases WHERE id = ?", [row.id]));
     details.deletedUserCases = userRows.length;
   }
 
   if (enterpriseRows.length) {
+    deleteConversationAttachmentsForCases(enterpriseRows);
     deleteCaseAttachments(enterpriseRows);
     enterpriseRows.forEach((row) => run("DELETE FROM cases WHERE id = ?", [row.id]));
     details.deletedEnterpriseCases = enterpriseRows.length;
@@ -1019,9 +1168,14 @@ const publicCaseLookupSchema = z.object({
   identifier: z.string().trim().min(3).max(180)
 });
 
-const publicProposalAcceptSchema = publicCaseLookupSchema.extend({ action_token: z.string().min(64).max(128) });
+const publicProposalAcceptSchema = publicCaseLookupSchema.extend({
+  action_token: z.string().min(64).max(128),
+  offer_id: z.string().trim().min(1).max(80).optional(),
+  communication_mode: z.string().trim().max(40).nullable().optional()
+});
 const publicPaymentReceiptSchema = publicCaseLookupSchema.extend({ action_token: z.string().min(64).max(128) });
 const publicActionTokenIssueSchema = z.object({ action: z.enum(["proposal_accept", "payment_receipt"]) });
+const publicCaseActionGrantSchema = publicCaseLookupSchema.extend({ action: z.enum(["proposal_accept", "payment_receipt"]) });
 
 const caseCreateSchema = z.object({
   categoria: z.union([z.string().trim().max(120), z.null(), z.undefined()]),
@@ -1085,6 +1239,7 @@ const caseUpdateSchema = z.object({
   quoted_currency: z.union([z.string().trim().max(8), z.null(), z.undefined()]),
   quoted_scope: z.union([z.string().trim().max(4000), z.null(), z.undefined()]),
   commercial_status: z.union([z.string().trim().max(40), z.null(), z.undefined()]),
+  communication_mode: z.union([z.string().trim().max(40), z.null(), z.undefined()]),
   message_visibility: z.union([z.enum(["public", "rfa_internal"]), z.null(), z.undefined()]),
   prioridad: z.union([z.string().trim().max(20), z.null(), z.undefined()]),
   riesgo: z.union([z.string().trim().max(20), z.null(), z.undefined()]),
@@ -1092,6 +1247,24 @@ const caseUpdateSchema = z.object({
   observaciones_empresa: z.union([z.string().trim().max(3000), z.null(), z.undefined()]),
   observaciones_rfa: z.union([z.string().trim().max(3000), z.null(), z.undefined()]),
   descripcion_breve: z.union([z.string().trim().max(4000), z.null(), z.undefined()])
+});
+const serviceOfferPublicationSchema = z.object({
+  offers: z.array(z.object({
+    service_code: z.enum(["professional-folder", "rfa-management"]),
+    quoted_amount: z.union([z.number(), z.string().trim().max(30)]),
+    quoted_currency: z.enum(["ARS", "USD"]),
+    quoted_scope: z.string().trim().min(1).max(4000),
+    available_communication_modes: z.array(z.enum(["rfa_managed", "client_sends"])).max(2).default([])
+  })).min(1).max(2)
+});
+
+const conversationSettingsSchema = z.object({
+  enabled: z.boolean().optional(),
+  client_reply_enabled: z.boolean().optional()
+}).refine((settings) => settings.enabled !== undefined || settings.client_reply_enabled !== undefined);
+const conversationMessageSchema = z.object({
+  body: z.string().trim().max(6000).optional().default(""),
+  channel: z.union([z.string().trim().max(160), z.null(), z.undefined()])
 });
 
 const enterpriseRetentionSchema = z.object({
@@ -1108,6 +1281,8 @@ function findPublicCaseByLookup(caseIdRaw, identifierRaw) {
     `SELECT
       c.id, c.case_code, c.estado, c.categoria, c.entidad, c.plan_elegido, c.service_code,
       c.quoted_amount, c.quoted_currency, c.quoted_scope, c.commercial_status,
+      c.communication_mode, c.accepted_proposal_snapshot,
+      c.commercial_flow_version, c.selected_offer_id, c.customer_communication_mode,
       c.quoted_at, c.proposal_accepted_at, c.payment_confirmed_at, c.created_at, c.updated_at,
       c.dni_cuit, c.email_contacto, c.payment_receipt_uploaded_at, c.payment_receipt_filename,
       COALESCE(c.email_contacto, u.email) AS owner_email
@@ -1130,6 +1305,124 @@ function findPublicCaseByLookup(caseIdRaw, identifierRaw) {
   return caso;
 }
 
+function getConversationForCase(caseId) {
+  return get("SELECT * FROM case_conversations WHERE case_id = ?", [caseId]);
+}
+
+function getConversationPayload(conversation) {
+  if (!conversation) return { enabled: false, client_reply_enabled: false, pending_admin_attention: false, messages: [] };
+  const messages = all(
+    `SELECT id, sender_type, message_type, body, channel, created_at
+     FROM case_conversation_messages
+     WHERE conversation_id = ?
+     ORDER BY created_at ASC, id ASC`,
+    [conversation.id]
+  ).map((message) => ({
+    ...message,
+    attachments: all(
+      `SELECT id, original_name, mime_type, size_bytes, created_at
+       FROM case_conversation_attachments
+       WHERE message_id = ?
+       ORDER BY created_at ASC, id ASC`,
+      [message.id]
+    )
+  }));
+  return {
+    enabled: Boolean(conversation.enabled),
+    client_reply_enabled: Boolean(conversation.client_reply_enabled),
+    pending_admin_attention: Boolean(conversation.pending_admin_attention),
+    messages
+  };
+}
+
+function getPublicConversationPayload(conversation) {
+  const payload = getConversationPayload(conversation);
+  return { enabled: payload.enabled, client_reply_enabled: payload.client_reply_enabled, messages: payload.messages };
+}
+
+function conversationNoStore(_req, res, next) {
+  res.setHeader("Cache-Control", "no-store, private");
+  res.setHeader("Pragma", "no-cache");
+  return next();
+}
+
+function conversationTokenRequired(req, res, next) {
+  const token = String(req.get("X-RFA-Conversation-Token") || "");
+  if (!/^[a-f0-9]{64}$/.test(token)) {
+    return res.status(404).json({ error: "Conversación no disponible" });
+  }
+  const tokenRow = get(
+    `SELECT token_hash, expires_at, conversation_id
+     FROM case_conversation_access_tokens
+     WHERE token_hash = ?`,
+    [hashConversationAccessToken(token)]
+  );
+  if (!tokenRow || !isConversationAccessTokenActive(token, tokenRow.token_hash, tokenRow.expires_at)) {
+    return res.status(404).json({ error: "Conversación no disponible" });
+  }
+  const conversation = get(
+    `SELECT cc.id, cc.case_id, cc.enabled
+     FROM case_conversations cc
+     JOIN cases c ON c.id = cc.case_id
+     WHERE cc.id = ? AND c.enterprise_user_id IS NULL`,
+    [tokenRow.conversation_id]
+  );
+  if (!conversation?.enabled) {
+    return res.status(404).json({ error: "Conversación no disponible" });
+  }
+  req.conversation = conversation;
+  return next();
+}
+
+function individualAdminConversationCase(req, res, next) {
+  const caso = get("SELECT id, enterprise_user_id FROM cases WHERE id = ?", [req.params.id]);
+  if (!caso || caso.enterprise_user_id) {
+    return res.status(404).json({ error: "Caso no encontrado" });
+  }
+  req.conversationCase = caso;
+  return next();
+}
+
+function persistConversationAttachments(messageId, files, now) {
+  (files || []).forEach((file) => {
+    run(
+      `INSERT INTO case_conversation_attachments
+       (id, message_id, storage_filename, original_name, mime_type, size_bytes, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        randomUUID(),
+        messageId,
+        path.basename(String(file.filename || "")),
+        cleanText(path.basename(String(file.originalname || "adjunto")), 255) || "adjunto",
+        cleanText(file.mimetype, 120) || "application/octet-stream",
+        Number(file.size) || 0,
+        now
+      ]
+    );
+  });
+}
+
+function deleteConversationAttachmentsForCases(caseRows = []) {
+  caseRows.forEach((row) => {
+    const conversation = get("SELECT id FROM case_conversations WHERE case_id = ?", [row.id]);
+    if (!conversation) return;
+    const files = all(
+      `SELECT a.storage_filename AS filename
+       FROM case_conversation_messages m
+       JOIN case_conversation_attachments a ON a.message_id = m.id
+       WHERE m.conversation_id = ?`,
+      [conversation.id]
+    );
+    files.forEach(deleteUploadedFile);
+    runInTransaction(() => {
+      run("DELETE FROM case_conversation_access_tokens WHERE conversation_id = ?", [conversation.id]);
+      run("DELETE FROM case_conversation_attachments WHERE message_id IN (SELECT id FROM case_conversation_messages WHERE conversation_id = ?)", [conversation.id]);
+      run("DELETE FROM case_conversation_messages WHERE conversation_id = ?", [conversation.id]);
+      run("DELETE FROM case_conversations WHERE id = ?", [conversation.id]);
+    });
+  });
+}
+
 function normalizeQuotedAmount(value) {
   if (value === undefined) return { provided: false, value: undefined };
   if (value === null || String(value).trim() === "") return { provided: true, value: null };
@@ -1146,6 +1439,30 @@ function getStoredServiceCode(caso) {
   return cleanText(caso?.service_code, 80) || cleanText(caso?.plan_elegido, 120) || null;
 }
 
+function getCaseServiceOffers(caseId, { publishedOnly = false } = {}) {
+  const rows = all(
+    `SELECT id, case_id, service_code, quoted_amount, quoted_currency, quoted_scope,
+            available_communication_modes, status, created_at, published_at, withdrawn_at
+     FROM case_service_offers
+     WHERE case_id = ? ${publishedOnly ? "AND status = 'published'" : ""}
+     ORDER BY created_at ASC, id ASC`,
+    [caseId]
+  );
+  return rows.map((offer) => {
+    let modes = [];
+    try { modes = JSON.parse(offer.available_communication_modes || "[]"); } catch { modes = []; }
+    return { ...offer, available_communication_modes: Array.isArray(modes) ? modes : [] };
+  });
+}
+
+function getCasePaymentReceipts(caseId) {
+  return all(
+    `SELECT id, case_id, original_filename, mime_type, size_bytes, uploaded_at, verified_at, verified_by, status
+     FROM case_payment_receipts WHERE case_id = ? ORDER BY uploaded_at DESC, rowid DESC`,
+    [caseId]
+  );
+}
+
 function getEffectiveCommercialStatus(caso) {
   const explicit = cleanText(caso?.commercial_status, 40);
   if (explicit && COMMERCIAL_STATUSES.has(explicit)) return explicit;
@@ -1154,6 +1471,59 @@ function getEffectiveCommercialStatus(caso) {
   const legacyPaidService = legacyService && legacyService !== "analysis" && legacyService !== "analisis inicial";
   if (legacyPaidService && legacyStatus === "viable (pendiente de pago)") return "payment_pending";
   return "analysis";
+}
+
+function getLatestPublicOperationalStatus(caseId) {
+  return get(
+    `SELECT estado FROM case_updates
+     WHERE case_id = ? AND visibility = 'public' AND estado IS NOT NULL
+     ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+    [caseId]
+  )?.estado || "received";
+}
+
+function getPersonaV2OperationalStage(caso) {
+  if (!caso || caso.enterprise_user_id || Number(caso.commercial_flow_version) < 2) return null;
+
+  const operationalStatus = String(
+    caso.operational_status_for_stage || caso.estado || caso.latest_public_operational_status || getLatestPublicOperationalStatus(caso.id)
+  );
+  const terminalStages = {
+    completed: "Finalizado",
+    referred: "Derivado",
+    not_applicable: "No corresponde"
+  };
+  if (terminalStages[operationalStatus]) return terminalStages[operationalStatus];
+
+  const commercialStatus = getEffectiveCommercialStatus(caso);
+  if (commercialStatus === "paid") return "En gestión";
+  if (commercialStatus === "payment_pending") {
+    return caso.payment_receipt_pending || caso.payment_receipt_uploaded_at
+      ? "Comprobante recibido / verificación de pago"
+      : "Pendiente de pago";
+  }
+  if (commercialStatus === "proposal_sent") return "Opciones disponibles";
+
+  switch (operationalStatus) {
+    case "in_analysis": return "En análisis";
+    case "needs_information": return "Falta información";
+    case "in_progress": return "En gestión";
+    default: return "Recibido";
+  }
+}
+
+function addPersonaV2OperationalStage(caso) {
+  if (!caso) return caso;
+  const stage = getPersonaV2OperationalStage(caso);
+  return stage ? { ...caso, operational_stage: stage } : caso;
+}
+
+function addPersonaV2OperationalStageForRole(caso, role) {
+  if (!caso || role === "admin") return addPersonaV2OperationalStage(caso);
+  return addPersonaV2OperationalStage({
+    ...caso,
+    operational_status_for_stage: caso.latest_public_operational_status || "received"
+  });
 }
 
 function hasVisibleProposal(caso) {
@@ -1171,6 +1541,8 @@ function sanitizeCaseForRole(caso, role) {
     delete sanitized.quoted_currency;
     delete sanitized.quoted_scope;
     delete sanitized.commercial_status;
+    delete sanitized.communication_mode;
+    delete sanitized.accepted_proposal_snapshot;
     delete sanitized.quoted_at;
     delete sanitized.proposal_accepted_at;
     delete sanitized.payment_confirmed_at;
@@ -1207,6 +1579,31 @@ function getActivePublicActionToken(token, caseId, action) {
        AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?`,
     [caseId, action, hashPublicActionToken(token), new Date().toISOString()]
   );
+}
+
+function hasExactPublicEmailMatch(caso, identifier) {
+  const submittedEmail = String(identifier || "").trim();
+  const caseEmail = String(caso?.owner_email || "").trim();
+  return submittedEmail.includes("@") && caseEmail.toLowerCase() === submittedEmail.toLowerCase();
+}
+
+function issuePublicCaseActionToken(caseId, action) {
+  const token = randomBytes(32).toString("hex");
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+  runInTransaction(() => {
+    run(
+      `UPDATE public_case_action_tokens
+       SET revoked_at = CURRENT_TIMESTAMP
+       WHERE case_id = ? AND action = ? AND used_at IS NULL AND revoked_at IS NULL`,
+      [caseId, action]
+    );
+    run(
+      `INSERT INTO public_case_action_tokens (id, case_id, action, token_hash, expires_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [randomUUID(), caseId, action, hashPublicActionToken(token), expiresAt]
+    );
+  });
+  return { token, expires_at: expiresAt };
 }
 
 function runInTransaction(callback) {
@@ -1278,6 +1675,12 @@ function setCsrfCookie(res) {
   res.cookie(CSRF_COOKIE_NAME, token, getCsrfCookieOptions());
   return token;
 }
+
+app.get("/api/auth/csrf", (req, res) => {
+  res.setHeader("Cache-Control", "no-store, private");
+  const token = cleanText(req.cookies?.[CSRF_COOKIE_NAME], 120) || setCsrfCookie(res);
+  return res.json({ csrf_token: token });
+});
 
 function getRequestIp(req) {
   return cleanText(req.ip || req.connection?.remoteAddress || "unknown", 80) || "unknown";
@@ -1825,7 +2228,8 @@ app.post("/api/public/cases", publicCaseLimiter, publicCaseUpload, async (req, r
       "ARS",
       caseCode,
       "Pendiente",
-      "Pendiente"
+      "Pendiente",
+      2
     ].map((value) => (value === undefined ? null : value));
 
     run(
@@ -1833,8 +2237,9 @@ app.post("/api/public/cases", publicCaseLimiter, publicCaseUpload, async (req, r
         id, user_id, categoria, detalle, estado, nombre_completo, dni_cuit, email_contacto, telefono,
         entidad, tipo_entidad, monto_valor, monto_escala, monto_moneda, medios_pago, relato,
         autorizacion, terms_accepted, privacy_accepted, consent_version, consent_accepted_at,
-        adjuntos, plan_elegido, service_code, commercial_status, quoted_currency, case_code, prioridad, riesgo
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        adjuntos, plan_elegido, service_code, commercial_status, quoted_currency, case_code, prioridad, riesgo,
+        commercial_flow_version
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       insertValues
     );
     caseCreated = true;
@@ -1863,6 +2268,8 @@ app.post("/api/public/cases", publicCaseLimiter, publicCaseUpload, async (req, r
 });
 
 app.post("/api/public/case-lookup", lookupLimiter, async (req, res) => {
+  res.setHeader("Cache-Control", "no-store, private");
+  res.setHeader("Pragma", "no-cache");
   try {
     const validated = validateBody(publicCaseLookupSchema, req.body);
     if (!validated.ok) {
@@ -1886,30 +2293,72 @@ app.post("/api/public/case-lookup", lookupLimiter, async (req, res) => {
       SELECT cu.id, cu.mensaje, cu.estado, cu.prioridad, cu.created_at
       FROM case_updates cu
       WHERE cu.case_id = ?
-        AND COALESCE(cu.visibility, 'public') = 'public'
+        AND (
+          cu.visibility = 'public'
+          OR (cu.visibility IS NULL AND COALESCE(?, 1) < 2)
+        )
       ORDER BY cu.created_at DESC, cu.rowid DESC
       `,
-      [caso.id]
+      [caso.id, Number(caso.commercial_flow_version) || 1]
     );
 
     const proposalVisible = hasVisibleProposal(caso);
     const commercialStatus = getEffectiveCommercialStatus(caso);
+    const paymentReceiptPending = getCasePaymentReceipts(caso.id).some((receipt) => receipt.status === "pending");
+    const operationalStage = getPersonaV2OperationalStage({
+      ...caso,
+      commercial_status: commercialStatus,
+      payment_receipt_pending: paymentReceiptPending,
+      operational_status_for_stage: updates.find((update) => update.estado)?.estado || "received"
+    });
+    const acceptedSnapshot = ["accepted", "payment_pending", "paid"].includes(commercialStatus)
+      ? parseAcceptedProposalSnapshot(caso.accepted_proposal_snapshot)
+      : null;
+    const proposalView = acceptedSnapshot || {
+      service_code: getStoredServiceCode(caso),
+      amount: Number(caso.quoted_amount) || null,
+      currency: caso.quoted_currency || "ARS",
+      scope: caso.quoted_scope || null,
+      communication_mode: caso.customer_communication_mode || caso.communication_mode || null
+    };
+    const serviceOffers = Number(caso.commercial_flow_version) >= 2 && !acceptedSnapshot
+      ? getCaseServiceOffers(caso.id, { publishedOnly: true })
+      : [];
+    const conversation = getConversationForCase(caso.id);
+    const emailMatchesExactly = hasExactPublicEmailMatch(caso, identifier);
+    const publicConversation = { enabled: Boolean(conversation?.enabled && emailMatchesExactly) };
+    if (publicConversation.enabled) {
+      const access = createConversationAccessToken();
+      const now = new Date().toISOString();
+      run("DELETE FROM case_conversation_access_tokens WHERE julianday(expires_at) <= julianday('now')");
+      run(
+        `INSERT INTO case_conversation_access_tokens (token_hash, conversation_id, expires_at, created_at)
+         VALUES (?, ?, ?, ?)`,
+        [access.tokenHash, conversation.id, access.expiresAt, now]
+      );
+      publicConversation.access_token = access.token;
+      publicConversation.expires_at = access.expiresAt;
+    }
 
+    const isPersonaV2 = Number(caso.commercial_flow_version) >= 2;
+    const publicUpdates = isPersonaV2
+      ? updates.map(({ id, mensaje, created_at }) => ({ id, mensaje, created_at }))
+      : updates;
     return res.json({
       case: {
         id: caso.id,
         case_code: caso.case_code || caso.id,
-        estado: caso.estado || "received",
+        ...(!isPersonaV2 ? { estado: caso.estado || "received" } : {}),
+        ...(operationalStage ? { operational_stage: operationalStage } : {}),
         categoria: caso.categoria || null,
         entidad: caso.entidad || null,
-        service_code: proposalVisible ? getStoredServiceCode(caso) : INITIAL_ANALYSIS_SERVICE_CODE,
+        service_code: proposalVisible ? proposalView.service_code : INITIAL_ANALYSIS_SERVICE_CODE,
         commercial_status: commercialStatus,
-        proposal: proposalVisible
+        commercial_flow_version: Number(caso.commercial_flow_version) || 1,
+        payment_receipt_pending: paymentReceiptPending,
+        proposal: proposalVisible && (Number(caso.commercial_flow_version) < 2 || acceptedSnapshot)
           ? {
-              service_code: getStoredServiceCode(caso),
-              amount: Number(caso.quoted_amount) || null,
-              currency: caso.quoted_currency || "ARS",
-              scope: caso.quoted_scope || null,
+              ...proposalView,
               status: commercialStatus,
               quoted_at: caso.quoted_at || null,
               accepted_at: caso.proposal_accepted_at || null,
@@ -1922,13 +2371,257 @@ app.post("/api/public/case-lookup", lookupLimiter, async (req, res) => {
         created_at: caso.created_at,
         updated_at: caso.updated_at
       },
-      updates
+      service_offers: serviceOffers,
+      updates: publicUpdates,
+      conversation: publicConversation
     });
   } catch (err) {
     console.error("PUBLIC CASE LOOKUP ERR:", req.requestId, err.message);
     return res.status(500).json({ error: "Error al consultar el caso" });
   }
 });
+
+app.get("/api/public/case-conversations", conversationNoStore, conversationReadLimiter, conversationTokenRequired, (req, res) => {
+  return res.json(getPublicConversationPayload(getConversationForCase(req.conversation.case_id)));
+});
+
+app.post(
+  "/api/public/case-conversations/messages",
+  conversationNoStore,
+  conversationWriteLimiter,
+  conversationTokenRequired,
+  conversationUpload,
+  (req, res) => {
+    const uploadedFiles = req.files || [];
+    const validated = validateBody(conversationMessageSchema, req.body);
+    if (!validated.ok) {
+      uploadedFiles.forEach(deleteUploadedFile);
+      return res.status(400).json({ error: validated.error });
+    }
+    if (!validated.data.body && uploadedFiles.length === 0) {
+      return res.status(400).json({ error: "Escribí la respuesta o adjuntá al menos un archivo." });
+    }
+    const conversation = getConversationForCase(req.conversation.case_id);
+    if (!conversation?.enabled) {
+      uploadedFiles.forEach(deleteUploadedFile);
+      return res.status(404).json({ error: "Conversación no disponible" });
+    }
+
+    let messageId;
+    try {
+      messageId = runInTransaction(() => {
+        if (!runAndCount(
+          "UPDATE case_conversations SET client_reply_enabled = 0 WHERE id = ? AND enabled = 1 AND client_reply_enabled = 1",
+          [conversation.id]
+        )) {
+          const error = new Error("El turno de respuesta no está habilitado.");
+          error.code = "CLIENT_REPLY_TURN_UNAVAILABLE";
+          throw error;
+        }
+        const now = new Date().toISOString();
+        const inserted = get(
+          `INSERT INTO case_conversation_messages
+           (conversation_id, sender_type, message_type, body, channel, author_user_id, created_at)
+           VALUES (?, 'client', 'received_reply', ?, NULL, NULL, ?)
+           RETURNING id`,
+          [conversation.id, validated.data.body, now]
+        );
+        const id = Number(inserted?.id);
+        persistConversationAttachments(id, uploadedFiles, now);
+        run(
+          "UPDATE case_conversations SET pending_admin_attention = 1, updated_at = ? WHERE id = ?",
+          [now, conversation.id]
+        );
+        run("UPDATE cases SET updated_at = ? WHERE id = ?", [now, conversation.case_id]);
+        return id;
+      });
+    } catch (error) {
+      uploadedFiles.forEach(deleteUploadedFile);
+      if (error.code === "CLIENT_REPLY_TURN_UNAVAILABLE") {
+        return res.status(409).json({ error: "No hay una respuesta habilitada para este caso." });
+      }
+      return res.status(500).json({ error: "No se pudo enviar la respuesta" });
+    }
+    return res.status(201).json({
+      message_id: messageId,
+      ...getPublicConversationPayload(getConversationForCase(conversation.case_id))
+    });
+  }
+);
+
+app.get(
+  "/api/public/case-conversations/attachments/:attachmentId",
+  conversationNoStore,
+  conversationReadLimiter,
+  conversationTokenRequired,
+  (req, res) => {
+    const attachment = get(
+      `SELECT a.storage_filename, a.original_name
+       FROM case_conversation_attachments a
+       JOIN case_conversation_messages m ON m.id = a.message_id
+       JOIN case_conversations cc ON cc.id = m.conversation_id
+       WHERE a.id = ? AND cc.id = ? AND cc.enabled = 1`,
+      [req.params.attachmentId, req.conversation.id]
+    );
+    if (!attachment) return res.status(404).json({ error: "Adjunto no disponible" });
+    const filename = path.basename(String(attachment.storage_filename || ""));
+    const filePath = path.join(UPLOADS_DIR, filename);
+    if (!filename || !fs.existsSync(filePath)) return res.status(404).json({ error: "Adjunto no disponible" });
+    return res.download(filePath, cleanText(attachment.original_name, 255) || "adjunto");
+  }
+);
+
+app.get(
+  "/api/cases/:id/conversations",
+  conversationNoStore,
+  authRequired,
+  adminOnly,
+  conversationReadLimiter,
+  individualAdminConversationCase,
+  (req, res) => res.json(getConversationPayload(getConversationForCase(req.conversationCase.id)))
+);
+
+app.patch(
+  "/api/cases/:id/conversations",
+  conversationNoStore,
+  authRequired,
+  adminOnly,
+  conversationAdminWriteLimiter,
+  individualAdminConversationCase,
+  (req, res) => {
+    const validated = validateBody(conversationSettingsSchema, req.body);
+    if (!validated.ok) return res.status(400).json({ error: "Configuración inválida" });
+    const now = new Date().toISOString();
+    let conversation = getConversationForCase(req.conversationCase.id);
+    if (validated.data.enabled === true) {
+      run(
+        `INSERT INTO case_conversations (id, case_id, enabled, created_at, updated_at)
+         VALUES (?, ?, 1, ?, ?)
+         ON CONFLICT(case_id) DO UPDATE SET enabled = 1, updated_at = excluded.updated_at`,
+        [randomUUID(), req.conversationCase.id, now, now]
+      );
+    } else if (validated.data.enabled === false && conversation) {
+      runInTransaction(() => {
+        run("UPDATE case_conversations SET enabled = 0, client_reply_enabled = 0, updated_at = ? WHERE id = ?", [now, conversation.id]);
+        run("DELETE FROM case_conversation_access_tokens WHERE conversation_id = ?", [conversation.id]);
+      });
+    }
+    conversation = getConversationForCase(req.conversationCase.id);
+    if (validated.data.client_reply_enabled !== undefined) {
+      if (!conversation?.enabled) return res.status(409).json({ error: "Habilitá Conversaciones antes de habilitar respuestas." });
+      run("UPDATE case_conversations SET client_reply_enabled = ?, updated_at = ? WHERE id = ?", [validated.data.client_reply_enabled ? 1 : 0, now, conversation.id]);
+      conversation = getConversationForCase(req.conversationCase.id);
+    }
+    return res.json(getConversationPayload(conversation));
+  }
+);
+
+app.post(
+  "/api/cases/:id/conversations/messages",
+  conversationNoStore,
+  authRequired,
+  adminOnly,
+  conversationAdminWriteLimiter,
+  individualAdminConversationCase,
+  conversationUpload,
+  (req, res) => {
+    const uploadedFiles = req.files || [];
+    const validated = validateBody(conversationMessageSchema, req.body);
+    if (!validated.ok) {
+      uploadedFiles.forEach(deleteUploadedFile);
+      return res.status(400).json({ error: validated.error });
+    }
+    if (!validated.data.body) {
+      uploadedFiles.forEach(deleteUploadedFile);
+      return res.status(400).json({ error: "El mensaje de RFA no puede estar vacío." });
+    }
+    const conversation = getConversationForCase(req.conversationCase.id);
+    if (!conversation?.enabled) {
+      uploadedFiles.forEach(deleteUploadedFile);
+      return res.status(409).json({ error: "Habilitá Conversaciones para publicar un mensaje" });
+    }
+
+    let messageId;
+    try {
+      messageId = runInTransaction(() => {
+        const now = new Date().toISOString();
+        const inserted = get(
+          `INSERT INTO case_conversation_messages
+           (conversation_id, sender_type, message_type, body, channel, author_user_id, created_at)
+           VALUES (?, 'rfa', 'prepared_message', ?, ?, ?, ?)
+           RETURNING id`,
+          [conversation.id, validated.data.body, cleanText(validated.data.channel, 160), req.user.sub, now]
+        );
+        const id = Number(inserted?.id);
+        persistConversationAttachments(id, uploadedFiles, now);
+        run("UPDATE case_conversations SET updated_at = ? WHERE id = ?", [now, conversation.id]);
+        run("UPDATE cases SET updated_at = ? WHERE id = ?", [now, conversation.case_id]);
+        return id;
+      });
+    } catch (_error) {
+      uploadedFiles.forEach(deleteUploadedFile);
+      return res.status(500).json({ error: "No se pudo publicar el mensaje" });
+    }
+    return res.status(201).json({
+      message_id: messageId,
+      ...getConversationPayload(getConversationForCase(req.conversationCase.id))
+    });
+  }
+);
+
+app.post(
+  "/api/cases/:id/conversations/mark-attended",
+  conversationNoStore,
+  authRequired,
+  adminOnly,
+  conversationAdminWriteLimiter,
+  individualAdminConversationCase,
+  (req, res) => {
+    const conversation = getConversationForCase(req.conversationCase.id);
+    if (!conversation) return res.status(404).json({ error: "Conversación no disponible" });
+    run(
+      "UPDATE case_conversations SET pending_admin_attention = 0, updated_at = ? WHERE id = ?",
+      [new Date().toISOString(), conversation.id]
+    );
+    return res.json(getConversationPayload(getConversationForCase(req.conversationCase.id)));
+  }
+);
+
+app.get(
+  "/api/cases/:id/conversations/attachments/:attachmentId",
+  conversationNoStore,
+  authRequired,
+  adminOnly,
+  conversationReadLimiter,
+  individualAdminConversationCase,
+  (req, res) => {
+    const attachment = get(
+      `SELECT a.storage_filename, a.original_name
+       FROM case_conversation_attachments a
+       JOIN case_conversation_messages m ON m.id = a.message_id
+       JOIN case_conversations cc ON cc.id = m.conversation_id
+       WHERE a.id = ? AND cc.case_id = ?`,
+      [req.params.attachmentId, req.conversationCase.id]
+    );
+    if (!attachment) return res.status(404).json({ error: "Adjunto no disponible" });
+    const filename = path.basename(String(attachment.storage_filename || ""));
+    const filePath = path.join(UPLOADS_DIR, filename);
+    if (!filename || !fs.existsSync(filePath)) return res.status(404).json({ error: "Adjunto no disponible" });
+    return res.download(filePath, cleanText(attachment.original_name, 255) || "adjunto");
+  }
+);
+
+app.get(
+  "/api/admin/conversations/pending",
+  authRequired,
+  adminOnly,
+  conversationReadLimiter,
+  conversationNoStore,
+  (_req, res) => res.json(all(
+    `SELECT case_id FROM case_conversations
+     WHERE pending_admin_attention = 1`
+  ).map((row) => row.case_id))
+);
 
 app.post("/api/admin/cases/:id/public-action-token", authRequired, adminOnly, adminActionTokenLimiter, async (req, res) => {
   try {
@@ -1971,17 +2664,171 @@ app.post("/api/admin/cases/:id/public-action-token", authRequired, adminOnly, ad
   }
 });
 
+app.get("/api/cases/:id/service-offers", authRequired, adminOnly, (req, res) => {
+  const caso = get("SELECT id, enterprise_user_id FROM cases WHERE id = ?", [req.params.id]);
+  if (!caso || caso.enterprise_user_id) return res.status(404).json({ error: "Caso no encontrado" });
+  return res.json(getCaseServiceOffers(caso.id));
+});
+
+app.put("/api/cases/:id/service-offers", authRequired, adminOnly, adminActionTokenLimiter, (req, res) => {
+  try {
+    const caso = get("SELECT * FROM cases WHERE id = ?", [req.params.id]);
+    if (!caso || caso.enterprise_user_id) return res.status(404).json({ error: "Caso no encontrado" });
+    if (Number(caso.commercial_flow_version) < 2) return res.status(409).json({ error: "Este caso conserva el flujo comercial histórico" });
+    if (caso.proposal_accepted_at || ["accepted", "payment_pending", "paid"].includes(getEffectiveCommercialStatus(caso))) {
+      return res.status(409).json({ error: "Las opciones no pueden modificarse después de la aceptación" });
+    }
+    const validated = validateBody(serviceOfferPublicationSchema, req.body);
+    if (!validated.ok) return res.status(400).json({ error: validated.error });
+    const offers = validated.data.offers;
+    if (new Set(offers.map((offer) => offer.service_code)).size !== offers.length) {
+      return res.status(400).json({ error: "Cada servicio puede ofrecerse una sola vez" });
+    }
+    const normalizedOffers = [];
+    for (const offer of offers) {
+      const amount = normalizeQuotedAmount(offer.quoted_amount);
+      const modes = [...new Set(offer.available_communication_modes || [])];
+      if (amount.error || !amount.value) return res.status(400).json({ error: amount.error || "Indica un precio válido" });
+      if (offer.service_code === "rfa-management" && modes.length === 0) {
+        return res.status(400).json({ error: "Gestión RFA requiere al menos una modalidad de comunicaciones disponible" });
+      }
+      if (offer.service_code === "professional-folder" && modes.length > 0) {
+        return res.status(400).json({ error: "Carpeta Profesional no admite modalidad de comunicaciones" });
+      }
+      normalizedOffers.push({ ...offer, quoted_amount: amount.value, available_communication_modes: modes });
+    }
+
+    const now = new Date().toISOString();
+    const inserted = runInTransaction(() => {
+      run("UPDATE case_service_offers SET status = 'withdrawn', withdrawn_at = ? WHERE case_id = ? AND status = 'published'", [now, caso.id]);
+      const created = normalizedOffers.map((offer) => {
+        const id = randomUUID();
+        run(
+          `INSERT INTO case_service_offers
+           (id, case_id, service_code, quoted_amount, quoted_currency, quoted_scope, available_communication_modes, status, created_by, created_at, published_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'published', ?, ?, ?)`,
+          [id, caso.id, offer.service_code, offer.quoted_amount, offer.quoted_currency, cleanText(offer.quoted_scope, 4000), JSON.stringify(offer.available_communication_modes), req.user.sub, now, now]
+        );
+        return { ...offer, id, case_id: caso.id, status: "published", created_at: now, published_at: now, withdrawn_at: null };
+      });
+      const first = created[0];
+      run(
+        `UPDATE cases SET commercial_status = 'proposal_sent', quoted_at = COALESCE(quoted_at, ?),
+          service_code = ?, quoted_amount = ?, quoted_currency = ?, quoted_scope = ?, communication_mode = NULL,
+          selected_offer_id = NULL, customer_communication_mode = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [now, first.service_code, first.quoted_amount, first.quoted_currency, first.quoted_scope, caso.id]
+      );
+      run("INSERT INTO case_updates (id, case_id, author_id, mensaje, estado, prioridad, visibility) VALUES (?, ?, ?, ?, ?, ?, ?)", [
+        randomUUID(), caso.id, req.user.sub, "RFA publicó opciones de servicio para este caso.", null, null, "public"
+      ]);
+      return created;
+    });
+    return res.status(201).json({ offers: inserted, case: addPersonaV2OperationalStage(get("SELECT * FROM cases WHERE id = ?", [caso.id])) });
+  } catch (err) {
+    console.error("CASE SERVICE OFFER PUBLISH ERR:", req.requestId, err.message);
+    return res.status(500).json({ error: "No se pudieron publicar las opciones" });
+  }
+});
+
+app.post("/api/public/case-action-token", publicActionGrantLimiter, (req, res) => {
+  res.setHeader("Cache-Control", "no-store, private");
+  res.setHeader("Pragma", "no-cache");
+  const validated = validateBody(publicCaseActionGrantSchema, req.body);
+  if (!validated.ok) return res.status(403).json({ error: "No se pudo autorizar la accion" });
+
+  const { case_id: caseId, identifier, action } = validated.data;
+  const caso = findPublicCaseByLookup(caseId, identifier);
+  const expectedStatus = action === "proposal_accept" ? "proposal_sent" : "payment_pending";
+  const actionAvailable = caso && Number(caso.commercial_flow_version) >= 2 &&
+    getEffectiveCommercialStatus(caso) === expectedStatus &&
+    hasExactPublicEmailMatch(caso, identifier) &&
+    (action !== "proposal_accept" || getCaseServiceOffers(caso.id, { publishedOnly: true }).length > 0);
+  if (!actionAvailable) return res.status(403).json({ error: "No se pudo autorizar la accion" });
+
+  try {
+    const grant = issuePublicCaseActionToken(caso.id, action);
+    return res.json({ action, token: grant.token, expires_at: grant.expires_at });
+  } catch (err) {
+    console.error("PUBLIC ACTION GRANT ERR:", req.requestId, err.message);
+    return res.status(500).json({ error: "No se pudo autorizar la accion" });
+  }
+});
+
 app.post("/api/public/case-proposal-accept", publicActionLimiter, async (req, res) => {
   try {
     const validated = validateBody(publicProposalAcceptSchema, req.body);
     if (!validated.ok) return res.status(403).json({ error: "No se pudo autorizar la accion" });
 
     const caso = findPublicCaseByLookup(validated.data.case_id, validated.data.identifier);
-    const tokenRow = caso
+    const tokenRow = caso && hasExactPublicEmailMatch(caso, validated.data.identifier)
       ? getActivePublicActionToken(validated.data.action_token, caso.id, "proposal_accept")
       : null;
     if (!caso || !tokenRow) {
       return res.status(403).json({ error: "No se pudo autorizar la accion" });
+    }
+    if (validated.data.offer_id) {
+      if (Number(caso.commercial_flow_version) < 2 || caso.commercial_status !== "proposal_sent") {
+        return res.status(409).json({ error: "Las opciones no están disponibles para aceptar" });
+      }
+      const offer = get(
+        `SELECT id, service_code, quoted_amount, quoted_currency, quoted_scope, available_communication_modes
+         FROM case_service_offers WHERE id = ? AND case_id = ? AND status = 'published'`,
+        [validated.data.offer_id, caso.id]
+      );
+      if (!offer) return res.status(403).json({ error: "No se pudo autorizar la accion" });
+      let availableModes = [];
+      try { availableModes = JSON.parse(offer.available_communication_modes || "[]"); } catch { availableModes = []; }
+      const chosenMode = validated.data.communication_mode || null;
+      if (offer.service_code === "rfa-management" && (!chosenMode || !availableModes.includes(chosenMode))) {
+        return res.status(400).json({ error: "Selecciona una modalidad disponible para esta opción" });
+      }
+      if (offer.service_code === "professional-folder" && chosenMode) {
+        return res.status(400).json({ error: "Esta opción no utiliza modalidad de comunicaciones" });
+      }
+      const acceptedAt = new Date().toISOString();
+      const accepted = runInTransaction(() => {
+        const active = getActivePublicActionToken(validated.data.action_token, caso.id, "proposal_accept");
+        const currentOffer = get(
+          `SELECT id, service_code, quoted_amount, quoted_currency, quoted_scope, available_communication_modes
+           FROM case_service_offers WHERE id = ? AND case_id = ? AND status = 'published'`,
+          [offer.id, caso.id]
+        );
+        if (!active || active.id !== tokenRow.id || caso.commercial_status !== "proposal_sent" || !currentOffer) return false;
+        let currentModes = [];
+        try { currentModes = JSON.parse(currentOffer.available_communication_modes || "[]"); } catch { currentModes = []; }
+        if (currentOffer.service_code === "rfa-management" && !currentModes.includes(chosenMode)) return false;
+        const snapshot = serializeAcceptedProposalSnapshot({
+          offer_id: currentOffer.id,
+          service_code: currentOffer.service_code,
+          quoted_amount: Number(currentOffer.quoted_amount),
+          quoted_currency: currentOffer.quoted_currency,
+          quoted_scope: currentOffer.quoted_scope,
+          communication_mode: chosenMode,
+          accepted_at: acceptedAt
+        });
+        if (!runAndCount(
+          `UPDATE cases SET commercial_status = 'payment_pending', proposal_accepted_at = ?,
+            accepted_proposal_snapshot = ?, selected_offer_id = ?, customer_communication_mode = ?,
+            service_code = ?, quoted_amount = ?, quoted_currency = ?, quoted_scope = ?, communication_mode = ?,
+            updated_at = CURRENT_TIMESTAMP
+           WHERE id = ? AND commercial_status = 'proposal_sent'`,
+          [acceptedAt, snapshot, currentOffer.id, chosenMode, currentOffer.service_code, currentOffer.quoted_amount,
+            currentOffer.quoted_currency, currentOffer.quoted_scope, chosenMode, caso.id]
+        )) return false;
+        if (!runAndCount(
+          `UPDATE public_case_action_tokens SET used_at = CURRENT_TIMESTAMP
+           WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?`,
+          [tokenRow.id, new Date().toISOString()]
+        )) throw new Error("ACTION_TOKEN_CONSUME_FAILED");
+        run("UPDATE case_service_offers SET status = CASE WHEN id = ? THEN 'published' ELSE 'withdrawn' END, withdrawn_at = CASE WHEN id = ? THEN withdrawn_at ELSE ? END WHERE case_id = ? AND status = 'published'", [currentOffer.id, currentOffer.id, acceptedAt, caso.id]);
+        run("INSERT INTO case_updates (id, case_id, author_id, mensaje, estado, prioridad, visibility) VALUES (?, ?, ?, ?, ?, ?, ?)", [
+          randomUUID(), caso.id, null, "El cliente eligió y aceptó una opción de servicio.", null, null, "public"
+        ]);
+        return true;
+      });
+      if (!accepted) return res.status(403).json({ error: "No se pudo autorizar la accion" });
+      logSecurityEvent(req, { eventType: "case_service_offer_accepted", resourceType: "case", resourceId: caso.id, success: true });
+      return res.json({ message: "Opción aceptada correctamente.", commercial_status: "payment_pending", accepted_at: acceptedAt });
     }
     if (caso.commercial_status !== "proposal_sent") {
       return res.status(409).json({ error: "La propuesta no esta disponible para aceptar" });
@@ -1993,9 +2840,26 @@ app.post("/api/public/case-proposal-accept", publicActionLimiter, async (req, re
     const accepted = runInTransaction(() => {
       const active = getActivePublicActionToken(validated.data.action_token, caso.id, "proposal_accept");
       if (!active || active.id !== tokenRow.id) return false;
+      const currentProposal = get(
+        `SELECT service_code, quoted_amount, quoted_currency, quoted_scope, communication_mode, commercial_status
+         FROM cases WHERE id = ?`,
+        [caso.id]
+      );
+      if (
+        !currentProposal ||
+        currentProposal.commercial_status !== "proposal_sent" ||
+        !PAID_SERVICE_CODES.has(String(currentProposal.service_code || "")) ||
+        !Number.isSafeInteger(Number(currentProposal.quoted_amount)) ||
+        Number(currentProposal.quoted_amount) < 1 ||
+        !currentProposal.quoted_scope ||
+        !isValidCommunicationMode(currentProposal.communication_mode)
+      ) return false;
+      const acceptedAt = new Date().toISOString();
+      const acceptedSnapshot = serializeAcceptedProposalSnapshot({ ...currentProposal, accepted_at: acceptedAt });
       if (!runAndCount(
-        `UPDATE cases SET commercial_status = 'accepted', proposal_accepted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ? AND commercial_status = 'proposal_sent'`, [caso.id]
+        `UPDATE cases SET commercial_status = 'payment_pending', proposal_accepted_at = ?,
+                          accepted_proposal_snapshot = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND commercial_status = 'proposal_sent'`, [acceptedAt, acceptedSnapshot, caso.id]
       )) return false;
       if (!runAndCount(
         `UPDATE public_case_action_tokens SET used_at = CURRENT_TIMESTAMP
@@ -2015,8 +2879,8 @@ app.post("/api/public/case-proposal-accept", publicActionLimiter, async (req, re
     });
     return res.json({
       message: "Propuesta aceptada correctamente.",
-      commercial_status: "accepted",
-      accepted_at: new Date().toISOString()
+      commercial_status: "payment_pending",
+      accepted_at: acceptedAt
     });
   } catch (err) {
     console.error("PUBLIC PROPOSAL ACCEPT ERR:", req.requestId, err.message);
@@ -2052,7 +2916,7 @@ app.post("/api/public/case-payment-receipt", publicReceiptLimiter, (req, res, ne
     }
 
     const caso = findPublicCaseByLookup(caseId, identifier);
-    const tokenRow = caso
+    const tokenRow = caso && hasExactPublicEmailMatch(caso, identifier)
       ? getActivePublicActionToken(validated.data.action_token, caso.id, "payment_receipt")
       : null;
     if (!caso || !tokenRow) {
@@ -2064,7 +2928,7 @@ app.post("/api/public/case-payment-receipt", publicReceiptLimiter, (req, res, ne
       return res.status(409).json({ error: "El caso no se encuentra pendiente de pago" });
     }
 
-    const oldFilename = path.basename(String(caso.payment_receipt_filename || "").trim());
+    const receiptId = randomUUID();
     const saved = runInTransaction(() => {
       const active = getActivePublicActionToken(validated.data.action_token, caso.id, "payment_receipt");
       if (!active || active.id !== tokenRow.id) return false;
@@ -2078,23 +2942,29 @@ app.post("/api/public/case-payment-receipt", publicReceiptLimiter, (req, res, ne
          )`,
         [req.file.filename, cleanText(req.file.originalname, 255), caso.id]
       )) return false;
+      run("UPDATE case_payment_receipts SET status = 'superseded' WHERE case_id = ? AND status = 'pending'", [caso.id]);
+      run(
+        `INSERT INTO case_payment_receipts
+         (id, case_id, storage_filename, original_filename, mime_type, size_bytes, uploaded_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
+        [receiptId, caso.id, path.basename(req.file.filename), cleanText(path.basename(req.file.originalname), 255) || "comprobante", cleanText(req.file.mimetype, 120) || "application/octet-stream", Number(req.file.size) || 0, new Date().toISOString()]
+      );
       if (!runAndCount(
         `UPDATE public_case_action_tokens SET used_at = CURRENT_TIMESTAMP
          WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?`,
         [tokenRow.id, new Date().toISOString()]
       )) throw new Error("ACTION_TOKEN_CONSUME_FAILED");
       run("INSERT INTO case_updates (id, case_id, author_id, mensaje, estado, prioridad, visibility) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [randomUUID(), caso.id, null, "Cliente cargo comprobante de pago.", caso.estado || null, null, "public"]);
+        [randomUUID(), caso.id, null, "Cliente cargo comprobante de pago.", Number(caso.commercial_flow_version) >= 2 ? null : caso.estado || null, null, "public"]);
       return true;
     });
     if (!saved) {
       deleteUploadedFile(req.file);
       return res.status(403).json({ error: "No se pudo autorizar la accion" });
     }
-    if (oldFilename && oldFilename !== req.file.filename) deleteUploadedFile({ filename: oldFilename });
-
     return res.status(201).json({
       message: "Comprobante cargado correctamente.",
+      payment_receipt_id: receiptId,
       payment_receipt_uploaded_at: new Date().toISOString()
     });
   } catch (err) {
@@ -2597,13 +3467,18 @@ app.get("/api/cases", authRequired, async (req, res) => {
   try {
     if (req.user.role === "admin") {
       const rows = all(`
-        SELECT c.*, u.email AS user_email, eu.email AS enterprise_email
+        SELECT c.*, u.email AS user_email, eu.email AS enterprise_email,
+               COALESCE(cc.pending_admin_attention, 0) AS conversation_pending_admin_attention,
+               EXISTS(SELECT 1 FROM case_payment_receipts pr WHERE pr.case_id = c.id AND pr.status = 'pending') AS payment_receipt_pending,
+               (SELECT COUNT(*) FROM case_service_offers so WHERE so.case_id = c.id AND so.status = 'published') AS published_offer_count,
+               (SELECT cu.estado FROM case_updates cu WHERE cu.case_id = c.id AND cu.visibility = 'public' AND cu.estado IS NOT NULL ORDER BY cu.created_at DESC, cu.rowid DESC LIMIT 1) AS latest_public_operational_status
         FROM cases c
         JOIN users u ON u.id = c.user_id
         LEFT JOIN users eu ON eu.id = c.enterprise_user_id
+        LEFT JOIN case_conversations cc ON cc.case_id = c.id
         ORDER BY c.created_at DESC
       `);
-      return res.json(rows);
+      return res.json(rows.map(addPersonaV2OperationalStage));
     }
     if (req.user.role === "enterprise") {
       const rows = all(
@@ -2616,8 +3491,12 @@ app.get("/api/cases", authRequired, async (req, res) => {
       );
       return res.json(rows.map((row) => sanitizeCaseForRole(row, "enterprise")));
     }
-    const rows = all("SELECT * FROM cases WHERE user_id = ? ORDER BY created_at DESC", [req.user.sub]);
-    return res.json(rows.map((row) => sanitizeCaseForRole(row, "user")));
+    const rows = all(`
+      SELECT c.*,
+             (SELECT cu.estado FROM case_updates cu WHERE cu.case_id = c.id AND cu.visibility = 'public' AND cu.estado IS NOT NULL ORDER BY cu.created_at DESC, cu.rowid DESC LIMIT 1) AS latest_public_operational_status
+      FROM cases c WHERE c.user_id = ? ORDER BY c.created_at DESC
+    `, [req.user.sub]);
+    return res.json(rows.map((row) => addPersonaV2OperationalStageForRole(sanitizeCaseForRole(row, "user"), "user")));
   } catch (err) {
     return res.status(500).json({ error: "Error al listar casos" });
   }
@@ -2691,8 +3570,9 @@ app.post("/api/cases", authRequired, authenticatedUploadLimiter, maybeUpload, as
         id, user_id, categoria, detalle, estado, nombre_completo, dni_cuit, email_contacto, telefono,
         entidad, tipo_entidad, monto_valor, monto_escala, monto_moneda, medios_pago, relato,
         autorizacion, terms_accepted, privacy_accepted, consent_version, consent_accepted_at,
-        adjuntos, plan_elegido, service_code, commercial_status, quoted_currency, case_code, prioridad, riesgo
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        adjuntos, plan_elegido, service_code, commercial_status, quoted_currency, case_code, prioridad, riesgo,
+        commercial_flow_version
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         caseId,
         req.user.sub,
@@ -2722,7 +3602,8 @@ app.post("/api/cases", authRequired, authenticatedUploadLimiter, maybeUpload, as
         "ARS",
         caseCode,
         prioridadInicial,
-        riesgoInicial
+        riesgoInicial,
+        2
       ]
     );
     caseCreated = true;
@@ -2760,13 +3641,26 @@ app.post("/api/cases", authRequired, authenticatedUploadLimiter, maybeUpload, as
 });
 app.get("/api/cases/:id", authRequired, async (req, res) => {
   try {
-    const caso = get("SELECT * FROM cases WHERE id = ?", [req.params.id]);
+    const caso = req.user.role === "admin"
+      ? get(
+        `SELECT c.*, COALESCE(cc.pending_admin_attention, 0) AS conversation_pending_admin_attention,
+                (SELECT cu.estado FROM case_updates cu WHERE cu.case_id = c.id AND cu.visibility = 'public' AND cu.estado IS NOT NULL ORDER BY cu.created_at DESC, cu.rowid DESC LIMIT 1) AS latest_public_operational_status
+         FROM cases c LEFT JOIN case_conversations cc ON cc.case_id = c.id WHERE c.id = ?`,
+        [req.params.id]
+      )
+      : get("SELECT * FROM cases WHERE id = ?", [req.params.id]);
     if (!caso) return res.status(404).json({ error: "Caso no encontrado" });
 
     if (!canAccessCase(req.user, caso)) {
       return res.status(403).json({ error: "Acceso restringido" });
     }
-    return res.json(sanitizeCaseForRole(caso, req.user.role));
+    const sanitized = addPersonaV2OperationalStageForRole(sanitizeCaseForRole(caso, req.user.role), req.user.role);
+    if (req.user.role === "admin" && !caso.enterprise_user_id) {
+      sanitized.service_offers = getCaseServiceOffers(caso.id);
+      sanitized.payment_receipts = getCasePaymentReceipts(caso.id);
+      sanitized.payment_receipt_pending = sanitized.payment_receipts.some((receipt) => receipt.status === "pending");
+    }
+    return res.json(sanitized);
   } catch (err) {
     return res.status(500).json({ error: "Error al obtener caso" });
   }
@@ -2840,6 +3734,54 @@ app.get("/api/cases/:id/files/:filename", authRequired, async (req, res) => {
   }
 });
 
+app.get("/api/cases/:id/payment-receipts", authRequired, adminOnly, (req, res) => {
+  const caso = get("SELECT id, enterprise_user_id FROM cases WHERE id = ?", [req.params.id]);
+  if (!caso || caso.enterprise_user_id) return res.status(404).json({ error: "Caso no encontrado" });
+  return res.json(getCasePaymentReceipts(caso.id));
+});
+
+app.get("/api/cases/:id/payment-receipts/:receiptId", authRequired, adminOnly, (req, res) => {
+  const caso = get("SELECT id, case_code, enterprise_user_id FROM cases WHERE id = ?", [req.params.id]);
+  if (!caso || caso.enterprise_user_id) return res.status(404).json({ error: "Comprobante no encontrado" });
+  const receipt = get("SELECT * FROM case_payment_receipts WHERE id = ? AND case_id = ?", [req.params.receiptId, caso.id]);
+  if (!receipt) return res.status(404).json({ error: "Comprobante no encontrado" });
+  const filename = path.basename(String(receipt.storage_filename || ""));
+  const filePath = path.join(UPLOADS_DIR, filename);
+  if (!filename || !fs.existsSync(filePath)) return res.status(404).json({ error: "Comprobante no disponible" });
+  return res.download(filePath, cleanText(receipt.original_filename, 255) || `comprobante_${caso.case_code || caso.id}`);
+});
+
+app.post("/api/cases/:id/payment-confirm", authRequired, adminOnly, adminActionTokenLimiter, (req, res) => {
+  try {
+    const caso = get("SELECT * FROM cases WHERE id = ?", [req.params.id]);
+    if (!caso || caso.enterprise_user_id) return res.status(404).json({ error: "Caso no encontrado" });
+    if (getEffectiveCommercialStatus(caso) !== "payment_pending") {
+      return res.status(409).json({ error: "El caso no está pendiente de pago" });
+    }
+    const receipt = req.body?.receipt_id
+      ? get("SELECT id FROM case_payment_receipts WHERE id = ? AND case_id = ? AND status = 'pending'", [String(req.body.receipt_id), caso.id])
+      : get("SELECT id FROM case_payment_receipts WHERE case_id = ? AND status = 'pending' ORDER BY uploaded_at DESC, rowid DESC LIMIT 1", [caso.id]);
+    if (!receipt) return res.status(409).json({ error: "No hay un comprobante pendiente de verificación" });
+    const verifiedAt = new Date().toISOString();
+    const confirmed = runInTransaction(() => {
+      if (!runAndCount("UPDATE case_payment_receipts SET status = 'verified', verified_at = ?, verified_by = ? WHERE id = ? AND case_id = ? AND status = 'pending'", [verifiedAt, req.user.sub, receipt.id, caso.id])) return false;
+      if (!runAndCount("UPDATE cases SET commercial_status = 'paid', payment_confirmed_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND commercial_status = 'payment_pending'", [verifiedAt, caso.id])) {
+        throw new Error("PAYMENT_CONFIRM_CONFLICT");
+      }
+      run("INSERT INTO case_updates (id, case_id, author_id, mensaje, estado, prioridad, visibility) VALUES (?, ?, ?, ?, ?, ?, ?)", [randomUUID(), caso.id, req.user.sub, "RFA confirmó el pago.", null, null, "public"]);
+      return true;
+    });
+    if (!confirmed) return res.status(409).json({ error: "No se pudo confirmar el pago" });
+    logSecurityEvent(req, { eventType: "case_payment_confirmed", resourceType: "case", resourceId: caso.id, success: true });
+    const updatedCase = get("SELECT * FROM cases WHERE id = ?", [caso.id]);
+    return res.json({ case: addPersonaV2OperationalStage({ ...updatedCase, payment_receipt_pending: false }), payment_receipts: getCasePaymentReceipts(caso.id) });
+  } catch (err) {
+    if (err.message === "PAYMENT_CONFIRM_CONFLICT") return res.status(409).json({ error: "No se pudo confirmar el pago" });
+    console.error("CASE PAYMENT CONFIRM ERR:", req.requestId, err.message);
+    return res.status(500).json({ error: "No se pudo confirmar el pago" });
+  }
+});
+
 app.get("/api/cases/:id/payment-receipt", authRequired, async (req, res) => {
   try {
     const caso = get("SELECT * FROM cases WHERE id = ?", [req.params.id]);
@@ -2887,6 +3829,7 @@ app.post("/api/cases/:id/updates", authRequired, async (req, res) => {
       quoted_currency,
       quoted_scope,
       commercial_status,
+      communication_mode,
       message_visibility,
       prioridad,
       riesgo,
@@ -2898,11 +3841,23 @@ app.post("/api/cases/:id/updates", authRequired, async (req, res) => {
 
     const proposalFields = ["service_code", "quoted_amount", "quoted_currency", "quoted_scope", "commercial_status"];
     const hasProposalInput = proposalFields.some((field) => Object.prototype.hasOwnProperty.call(data, field));
+    const hasCommunicationModeInput = Object.prototype.hasOwnProperty.call(data, "communication_mode");
+    if (!isEnterpriseCase && Number(caso.commercial_flow_version) >= 2 && (hasProposalInput || hasCommunicationModeInput)) {
+      return res.status(400).json({ error: "Las opciones y transiciones comerciales se gestionan mediante el flujo de ofertas y acciones confirmadas" });
+    }
     if (Object.prototype.hasOwnProperty.call(data, "plan_elegido") && plan_elegido != null) {
       return res.status(400).json({ error: "plan_elegido es un campo historico; usa service_code" });
     }
-    if (hasProposalInput && (!isAdmin || isEnterpriseCase)) {
+    if ((hasProposalInput || hasCommunicationModeInput) && (!isAdmin || isEnterpriseCase)) {
       return res.status(403).json({ error: "La propuesta comercial solo se administra en casos particulares" });
+    }
+    if (hasCommunicationModeInput) {
+      if (!isValidCommunicationMode(communication_mode)) {
+        return res.status(400).json({ error: "Modalidad de comunicaciones invalida" });
+      }
+      if (caso.proposal_accepted_at && communication_mode !== (caso.communication_mode || null)) {
+        return res.status(409).json({ error: "La modalidad no puede cambiarse despues de aceptar la propuesta" });
+      }
     }
     if (isEnterprise && (riesgo != null || documentacion_estado != null || observaciones_rfa != null)) {
       return res.status(403).json({ error: "La evaluacion RFA solo puede ser modificada por administracion" });
@@ -2964,6 +3919,22 @@ app.post("/api/cases/:id/updates", authRequired, async (req, res) => {
     const nextCommercialStatus = commercial_status !== undefined
       ? cleanText(commercial_status, 40)
       : caso.commercial_status || "analysis";
+    const nextCommunicationMode = hasCommunicationModeInput
+      ? communication_mode
+      : caso.communication_mode || null;
+    const proposalAlreadyAccepted = Boolean(caso.proposal_accepted_at) ||
+      ["accepted", "payment_pending", "paid"].includes(getEffectiveCommercialStatus(caso));
+    if (proposalAlreadyAccepted) {
+      const termsChanged =
+        (service_code !== undefined && nextServiceCode !== (cleanText(caso.service_code, 80) || null)) ||
+        (amountResult.provided && nextAmount !== (Number(caso.quoted_amount) || null)) ||
+        (quoted_currency !== undefined && nextCurrency !== String(caso.quoted_currency || "ARS").toUpperCase()) ||
+        (quoted_scope !== undefined && nextScope !== (cleanText(caso.quoted_scope, 4000) || null)) ||
+        (hasCommunicationModeInput && nextCommunicationMode !== (caso.communication_mode || null));
+      if (termsChanged) {
+        return res.status(409).json({ error: "Los terminos de una propuesta aceptada no pueden modificarse" });
+      }
+    }
 
     if (hasProposalInput) {
       if (!PARTICULAR_SERVICE_CODES.has(String(nextServiceCode || ""))) {
@@ -3030,6 +4001,34 @@ app.post("/api/cases/:id/updates", authRequired, async (req, res) => {
       ? cleanText(descripcion_breve, 4000)
       : cleanText(caso.detalle, 4000);
 
+    const isPersonaV2Case = !isEnterpriseCase && Number(caso.commercial_flow_version) >= 2;
+    const requestedMessage = isNonEmptyString(mensaje) ? cleanText(mensaje, 3000) : "";
+    const requestedVisibility = isEnterprise
+      ? "enterprise_internal"
+      : message_visibility === "public" && requestedMessage
+        ? "public"
+        : "rfa_internal";
+    const caseFieldsChanged =
+      newEstado !== (caso.estado || null) ||
+      newPrioridad !== (caso.prioridad || null) ||
+      newRiesgo !== (caso.riesgo || null) ||
+      newDocumentacion !== (caso.documentacion_estado || null) ||
+      newObsEmpresa !== (caso.observaciones_empresa || null) ||
+      newObsRfa !== (caso.observaciones_rfa || null) ||
+      (descripcion_breve !== undefined && newDescripcion !== (cleanText(caso.detalle, 4000) || null));
+    const latestVisibleUpdate = requestedMessage
+      ? get(
+          `SELECT mensaje, visibility FROM case_updates
+           WHERE case_id = ? AND COALESCE(visibility, 'public') = ?
+           ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+          [caso.id, requestedVisibility]
+        )
+      : null;
+    const duplicateMessage = Boolean(requestedMessage && latestVisibleUpdate?.mensaje === requestedMessage);
+    if (isPersonaV2Case && !caseFieldsChanged && (!requestedMessage || duplicateMessage)) {
+      return res.json({ update: null, case: addPersonaV2OperationalStage(caso) });
+    }
+
     const now = new Date().toISOString();
     const nextQuotedAt = nextCommercialStatus !== "analysis" && !caso.quoted_at ? now : caso.quoted_at || null;
     const nextAcceptedAt = ["accepted", "payment_pending", "paid"].includes(nextCommercialStatus) && !caso.proposal_accepted_at
@@ -3038,15 +4037,29 @@ app.post("/api/cases/:id/updates", authRequired, async (req, res) => {
     const nextPaymentConfirmedAt = nextCommercialStatus === "paid" && !caso.payment_confirmed_at
       ? now
       : caso.payment_confirmed_at || null;
+    const nextAcceptedProposalSnapshot = !isEnterpriseCase &&
+      !caso.accepted_proposal_snapshot &&
+      !caso.proposal_accepted_at &&
+      ["accepted", "payment_pending", "paid"].includes(nextCommercialStatus)
+      ? serializeAcceptedProposalSnapshot({
+          service_code: nextServiceCode,
+          quoted_amount: nextAmount,
+          quoted_currency: nextCurrency,
+          quoted_scope: nextScope,
+          communication_mode: nextCommunicationMode
+        })
+      : caso.accepted_proposal_snapshot || null;
 
-    const messageText = isNonEmptyString(mensaje)
-      ? cleanText(mensaje, 3000)
+    const messageText = requestedMessage
+      ? requestedMessage
       : isEnterprise
         ? "Actualizacion interna de empresa."
-        : "Actualizacion interna RFA.";
+        : isPersonaV2Case
+          ? "Se actualizó información interna del expediente."
+          : "Actualizacion interna RFA.";
     const visibility = isEnterprise
       ? "enterprise_internal"
-      : message_visibility === "public" && isNonEmptyString(mensaje)
+      : message_visibility === "public" && requestedMessage
         ? "public"
         : "rfa_internal";
 
@@ -3060,7 +4073,7 @@ app.post("/api/cases/:id/updates", authRequired, async (req, res) => {
        SET estado = ?, prioridad = ?, riesgo = ?, documentacion_estado = ?,
            observaciones_empresa = ?, observaciones_rfa = ?, detalle = ?, relato = ?,
            service_code = ?, quoted_amount = ?, quoted_currency = ?, quoted_scope = ?, commercial_status = ?,
-           quoted_at = ?, proposal_accepted_at = ?, payment_confirmed_at = ?, updated_at = CURRENT_TIMESTAMP
+           communication_mode = ?, accepted_proposal_snapshot = ?, quoted_at = ?, proposal_accepted_at = ?, payment_confirmed_at = ?, updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
       [
         newEstado,
@@ -3076,6 +4089,8 @@ app.post("/api/cases/:id/updates", authRequired, async (req, res) => {
         isEnterpriseCase ? caso.quoted_currency || null : nextCurrency,
         isEnterpriseCase ? caso.quoted_scope || null : nextScope,
         isEnterpriseCase ? caso.commercial_status || null : nextCommercialStatus,
+        isEnterpriseCase ? caso.communication_mode || null : nextCommunicationMode,
+        isEnterpriseCase ? caso.accepted_proposal_snapshot || null : nextAcceptedProposalSnapshot,
         isEnterpriseCase ? caso.quoted_at || null : nextQuotedAt,
         isEnterpriseCase ? caso.proposal_accepted_at || null : nextAcceptedAt,
         isEnterpriseCase ? caso.payment_confirmed_at || null : nextPaymentConfirmedAt,
@@ -3101,7 +4116,7 @@ app.post("/api/cases/:id/updates", authRequired, async (req, res) => {
 
     return res.status(201).json({
       update: get("SELECT * FROM case_updates WHERE id = ?", [updateId]),
-      case: get("SELECT * FROM cases WHERE id = ?", [req.params.id])
+      case: addPersonaV2OperationalStage(get("SELECT * FROM cases WHERE id = ?", [req.params.id]))
     });
   } catch (err) {
     console.error("CASE UPDATE ERR:", req.requestId, err.message);
@@ -3482,6 +4497,17 @@ app.use((err, req, res, next) => {
   if (!err) return next();
   (req.files || []).forEach(deleteUploadedFile);
   deleteUploadedFile(req.file);
+  const isConversationMessage = /^\/api\/(?:public\/case-conversations\/messages|cases\/[^/]+\/conversations\/messages)$/.test(req.path);
+  if (isConversationMessage && err.code === "UNSUPPORTED_FILE_TYPE") {
+    const name = cleanText(path.basename(String(err.fileName || "archivo")), 120) || "archivo";
+    return res.status(400).json({ error: `El archivo "${name}" tiene un formato no permitido. Usá PDF, PNG, JPG/JPEG, DOC, DOCX o TXT.` });
+  }
+  if (isConversationMessage && err.code === "LIMIT_FILE_SIZE") {
+    return res.status(413).json({ error: "Un archivo supera el límite de 25 MB." });
+  }
+  if (isConversationMessage && ["LIMIT_FILE_COUNT", "LIMIT_UNEXPECTED_FILE"].includes(err.code)) {
+    return res.status(400).json({ error: `Podés adjuntar hasta ${CASE_ATTACHMENT_MAX_FILES} archivos.` });
+  }
   if (req.path === "/api/public/cases") {
     if (err.code === "UNSUPPORTED_FILE_TYPE") {
       return res.status(400).json({
@@ -3512,27 +4538,59 @@ app.use((err, req, res, next) => {
   return res.status(500).json({ error: "Error interno del servidor" });
 });
 
+function openVerifiedDatabase(SQL, filePath) {
+  if (fs.statSync(filePath).size === 0) throw new Error("SQLite file is empty");
+  const candidate = new SQL.Database(new Uint8Array(fs.readFileSync(filePath)));
+  try {
+    const result = candidate.exec("PRAGMA integrity_check");
+    if (result[0]?.values?.length !== 1 || result[0].values[0][0] !== "ok") {
+      throw new Error("SQLite integrity check failed");
+    }
+    return candidate;
+  } catch (error) {
+    candidate.close();
+    throw error;
+  }
+}
+
+function recoverDatabase(SQL) {
+  const bakPath = `${DB_PATH}.bak`;
+  if (fs.existsSync(DB_PATH)) {
+    try {
+      return openVerifiedDatabase(SQL, DB_PATH);
+    } catch (primaryError) {
+      if (!fs.existsSync(bakPath)) throw primaryError;
+      console.warn("DB RECOVERY: primary database invalid; checking backup");
+    }
+  } else if (!fs.existsSync(bakPath)) {
+    return new SQL.Database();
+  }
+
+  const backup = openVerifiedDatabase(SQL, bakPath);
+  backup.close();
+  const restorePath = `${DB_PATH}.restore-${randomUUID()}`;
+  const corruptPath = `${DB_PATH}.corrupt-${randomUUID()}`;
+  const hadPrimary = fs.existsSync(DB_PATH);
+  try {
+    fs.copyFileSync(bakPath, restorePath, fs.constants.COPYFILE_EXCL);
+    openVerifiedDatabase(SQL, restorePath).close();
+    if (hadPrimary) fs.renameSync(DB_PATH, corruptPath);
+    try {
+      fs.renameSync(restorePath, DB_PATH);
+    } catch (error) {
+      if (hadPrimary && !fs.existsSync(DB_PATH)) fs.renameSync(corruptPath, DB_PATH);
+      throw error;
+    }
+    console.warn("DB RECOVERY: restored verified backup; original backup preserved");
+    return openVerifiedDatabase(SQL, DB_PATH);
+  } finally {
+    if (fs.existsSync(restorePath)) fs.unlinkSync(restorePath);
+  }
+}
+
 initSqlJs({ locateFile: (file) => path.join(__dirname, "node_modules", "sql.js", "dist", file) })
   .then((SQL) => {
-    // Recuperar el archivo persistido antes de abrirlo en memoria.
-    try {
-      const bakPath = `${DB_PATH}.bak`;
-      if (!fs.existsSync(DB_PATH) && fs.existsSync(bakPath)) {
-        fs.renameSync(bakPath, DB_PATH);
-      }
-      const tmpPath = `${DB_PATH}.tmp`;
-      if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
-      // Si existe .bak y DB existe, limpiamos el backup viejo.
-      if (fs.existsSync(DB_PATH) && fs.existsSync(bakPath)) fs.unlinkSync(bakPath);
-    } catch (err) {
-      console.warn("DB RECOVERY WARN:", err.message);
-    }
-    if (fs.existsSync(DB_PATH)) {
-      const filebuffer = fs.readFileSync(DB_PATH);
-      db = new SQL.Database(new Uint8Array(filebuffer));
-    } else {
-      db = new SQL.Database();
-    }
+    db = recoverDatabase(SQL);
     initDb();
     ensureAdminAccounts();
     if (DATA_PURGE_ENABLED) {

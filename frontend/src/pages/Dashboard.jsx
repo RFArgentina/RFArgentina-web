@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { apiRequest } from "@/lib/api";
+import CaseConversations from "@/components/CaseConversations";
 import { escapeCsvCell } from "@/lib/csv";
 import { clearToken, getToken } from "@/lib/auth";
 import { formatDateAr, formatDateTimeAr } from "@/lib/datetime";
@@ -50,6 +51,26 @@ const publicCaseCategories = [
 
 const isNewAdminCase = (caseItem) =>
   !caseItem.enterprise_user_id && caseItem.service_code === analysisService.code;
+
+const emptyServiceOfferDrafts = () => ({
+  "professional-folder": { enabled: false, quoted_amount: "", quoted_currency: "ARS", quoted_scope: "", available_communication_modes: [] },
+  "rfa-management": { enabled: false, quoted_amount: "", quoted_currency: "ARS", quoted_scope: "", available_communication_modes: [] }
+});
+
+const serviceOfferDraftsFromOffers = (offers = []) => {
+  const drafts = emptyServiceOfferDrafts();
+  (offers || []).filter((offer) => offer.status === "published").forEach((offer) => {
+    if (!drafts[offer.service_code]) return;
+    drafts[offer.service_code] = {
+      enabled: true,
+      quoted_amount: String(offer.quoted_amount || ""),
+      quoted_currency: offer.quoted_currency || "ARS",
+      quoted_scope: offer.quoted_scope || "",
+      available_communication_modes: offer.available_communication_modes || []
+    };
+  });
+  return drafts;
+};
 
 function validatePublicCaseAttachments(files) {
   if (files.length > PUBLIC_CASE_ATTACHMENT_MAX_FILES) {
@@ -144,8 +165,11 @@ export default function Dashboard() {
   });
   const [showNewCaseForm, setShowNewCaseForm] = useState(true);
   const [publicCaseCode, setPublicCaseCode] = useState("");
+  const [copiedPublicCaseCode, setCopiedPublicCaseCode] = useState(false);
   const [adminNote, setAdminNote] = useState("");
   const [adminPublicMessage, setAdminPublicMessage] = useState("");
+  const [personaV2InfoRequestCaseId, setPersonaV2InfoRequestCaseId] = useState("");
+  const [personaV2InfoRequestText, setPersonaV2InfoRequestText] = useState("");
   const [adminStatus, setAdminStatus] = useState("");
   const [adminPriority, setAdminPriority] = useState("");
   const [adminRisk, setAdminRisk] = useState("");
@@ -153,6 +177,9 @@ export default function Dashboard() {
   const [adminQuotedAmount, setAdminQuotedAmount] = useState("");
   const [adminQuotedScope, setAdminQuotedScope] = useState("");
   const [adminCommercialStatus, setAdminCommercialStatus] = useState("");
+  const [adminCommunicationMode, setAdminCommunicationMode] = useState("");
+  const [adminOfferDrafts, setAdminOfferDrafts] = useState(emptyServiceOfferDrafts);
+  const [adminOffersDirty, setAdminOffersDirty] = useState(false);
   const [adminSaveNotice, setAdminSaveNotice] = useState("");
   const [adminCaseSourceFilter, setAdminCaseSourceFilter] = useState("todos");
   const [adminListFilter, setAdminListFilter] = useState("all");
@@ -240,7 +267,7 @@ export default function Dashboard() {
       hasDraftMap(enterpriseInternalNotesDrafts) ||
       Boolean(
         adminNote || adminPublicMessage || adminStatus || adminPriority || adminRisk || adminServiceCode ||
-        adminQuotedAmount || adminQuotedScope || adminCommercialStatus
+        adminQuotedAmount || adminQuotedScope || adminCommercialStatus || adminCommunicationMode || adminOffersDirty
       )
     );
   }, [
@@ -255,7 +282,9 @@ export default function Dashboard() {
     adminServiceCode,
     adminQuotedAmount,
     adminQuotedScope,
-    adminCommercialStatus
+    adminCommercialStatus,
+    adminCommunicationMode,
+    adminOffersDirty
   ]);
   const casesById = useMemo(() => {
     const map = new Map();
@@ -264,6 +293,75 @@ export default function Dashboard() {
     });
     return map;
   }, [cases]);
+  const expandedCase = expandedCaseId ? casesById.get(expandedCaseId) : null;
+  const isNewCommercialCase = Boolean(
+    isAdmin && expandedCase && !expandedCase.enterprise_user_id && Number(expandedCase.commercial_flow_version) >= 2
+  );
+  const isNewCommercialTab = isNewCommercialCase && adminDetailTab === "commercial";
+  const hasAdminCaseEdits = Boolean(
+    adminNote || adminPublicMessage || adminStatus || adminPriority || adminRisk || adminServiceCode ||
+    adminQuotedAmount || adminQuotedScope || adminCommercialStatus || adminCommunicationMode
+  );
+  const getDashboardCommercialStatusLabel = (status, caseItem) =>
+    !caseItem?.enterprise_user_id && Number(caseItem?.commercial_flow_version) >= 2 && status === "proposal_sent"
+      ? "Opciones disponibles"
+      : getCommercialStatusLabel(status);
+  const getDashboardCaseStageLabel = (caseItem) =>
+    !caseItem?.enterprise_user_id && Number(caseItem?.commercial_flow_version) >= 2
+      ? caseItem.operational_stage || "Recibido"
+      : getOperationalStatusLabel(caseItem?.estado);
+
+  const personaV2OperationalActions = [
+    { status: "in_analysis", label: "Iniciar análisis", internalMessage: "Se inició el análisis interno del expediente." },
+    { status: "needs_information", label: "Solicitar información", requiresClientMessage: true },
+    { status: "completed", label: "Finalizar caso", internalMessage: "El expediente se marcó como finalizado internamente." },
+    { status: "not_applicable", label: "Marcar como no corresponde", internalMessage: "El expediente se marcó internamente como no correspondiente." },
+    { status: "referred", label: "Registrar derivación", internalMessage: "Se registró internamente la derivación del expediente." }
+  ];
+
+  const handlePersonaV2OperationalAction = async (caseItem, status, clientMessage = "") => {
+    const action = personaV2OperationalActions.find((item) => item.status === status);
+    const isClientCommunication = Boolean(action?.requiresClientMessage);
+    const message = isClientCommunication ? String(clientMessage || "").trim() : action?.internalMessage;
+    if (!action || !isAdmin || caseItem?.enterprise_user_id || Number(caseItem?.commercial_flow_version) < 2) return;
+    if (!message) {
+      setError("Escribí qué información necesitás antes de enviar la solicitud.");
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    setAdminSaveNotice("");
+    try {
+      const result = await apiRequest(`/cases/${encodeURIComponent(caseItem.id)}/updates`, {
+        method: "POST",
+        body: JSON.stringify({
+          estado: status,
+          mensaje: message,
+          message_visibility: isClientCommunication ? "public" : "rfa_internal"
+        })
+      });
+      if (result?.case) {
+        setCases((current) => current.map((item) => item.id === caseItem.id ? { ...item, ...result.case } : item));
+      }
+      if (result?.update) {
+        setUpdates((current) => ({
+          ...current,
+          [caseItem.id]: [result.update, ...(current[caseItem.id] || [])]
+        }));
+      }
+      setAdminSaveNotice(result?.update
+        ? isClientCommunication ? "Solicitud enviada y registrada en los avances del cliente." : "Acción registrada como actividad interna de RFA."
+        : "La acción ya estaba registrada.");
+      if (isClientCommunication) {
+        setPersonaV2InfoRequestCaseId("");
+        setPersonaV2InfoRequestText("");
+      }
+    } catch (err) {
+      setError(err.message || "No se pudo actualizar la etapa.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   function isAdminClosedCase(caseItem) {
     const status = normalizeCompare(getOperationalStatusLabel(caseItem?.estado));
@@ -273,7 +371,27 @@ export default function Dashboard() {
   function isAdminAttentionCase(caseItem) {
     const priority = normalizeCompare(caseItem?.prioridad);
     const risk = normalizeCompare(caseItem?.riesgo);
-    return ["alta", "critica", "alto", "critico"].includes(priority) || ["alto", "critico"].includes(risk);
+    return Boolean(caseItem?.conversation_pending_admin_attention) ||
+      Boolean(caseItem?.payment_receipt_pending) ||
+      ["alta", "critica", "alto", "critico"].includes(priority) || ["alto", "critico"].includes(risk);
+  }
+
+  function getAdminNextStep(caseItem) {
+    if (hasPendingConversationReply(caseItem)) return "Revisar nueva respuesta";
+    if (caseItem?.payment_receipt_pending) return "Verificar pago";
+    const status = getEffectiveCommercialStatus(caseItem);
+    if (status === "analysis") return "Revisar caso";
+    if (status === "proposal_sent") return Number(caseItem?.published_offer_count || 0) > 0
+      ? "Esperando elección del cliente"
+      : "Completar opciones para el cliente";
+    if (status === "accepted" || status === "payment_pending") return "Esperando comprobante";
+    if (status === "paid") return "Gestión activa";
+    return "Sin acción pendiente";
+  }
+
+  function hasPendingConversationReply(caseItem) {
+    return caseItem?.conversation_pending_admin_attention === true ||
+      Number(caseItem?.conversation_pending_admin_attention) === 1;
   }
 
   function isAdminDocumentationPendingCase(caseItem) {
@@ -312,7 +430,7 @@ export default function Dashboard() {
     const query = searchQuery.trim().toLowerCase();
     return cases.filter((c) => {
       const matchStatus = !filterStatus || c.estado === filterStatus;
-      const matchPriority = !filterPriority || normalizeCompare(c.prioridad) === normalizeCompare(filterPriority);
+      const matchPriority = adminCaseSourceFilter === "rfa" || !filterPriority || normalizeCompare(c.prioridad) === normalizeCompare(filterPriority);
       const matchPlan = !filterPlan || getCaseServiceValue(c) === filterPlan;
       const matchMoneda = !filterMoneda || c.monto_moneda === filterMoneda;
       const entidadText = (c.entidad || "").toLowerCase();
@@ -671,6 +789,37 @@ export default function Dashboard() {
   }, [isAdmin]);
 
   useEffect(() => {
+    if (!isAdmin) return undefined;
+    let active = true;
+    const refreshPendingConversations = async () => {
+      try {
+        const pendingIds = await apiRequest("/admin/conversations/pending");
+        if (!active || !Array.isArray(pendingIds)) return;
+        const pending = new Set(pendingIds.map(String));
+        setCases((current) => {
+          let changed = false;
+          const next = current.map((caseItem) => {
+            if (caseItem.enterprise_user_id) return caseItem;
+            const nextValue = pending.has(String(caseItem.id)) ? 1 : 0;
+            if (Number(caseItem.conversation_pending_admin_attention || 0) === nextValue) return caseItem;
+            changed = true;
+            return { ...caseItem, conversation_pending_admin_attention: nextValue };
+          });
+          return changed ? next : current;
+        });
+      } catch {
+        // A polling failure should not interrupt the admin's current work.
+      }
+    };
+    refreshPendingConversations();
+    const intervalId = window.setInterval(refreshPendingConversations, 30000);
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+    };
+  }, [isAdmin]);
+
+  useEffect(() => {
     if (!isAdmin) return;
     if (page !== 1) setPage(1);
   }, [
@@ -696,8 +845,11 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!isAdmin || !expandedCaseId) return;
+    setAdminDetailTab("summary");
     setAdminNote("");
     setAdminPublicMessage("");
+    setPersonaV2InfoRequestCaseId("");
+    setPersonaV2InfoRequestText("");
     setAdminStatus("");
     setAdminPriority("");
     setAdminRisk("");
@@ -705,6 +857,7 @@ export default function Dashboard() {
     setAdminQuotedAmount("");
     setAdminQuotedScope("");
     setAdminCommercialStatus("");
+    setAdminCommunicationMode("");
     setAdminSaveNotice("");
   }, [expandedCaseId, isAdmin]);
 
@@ -888,6 +1041,7 @@ export default function Dashboard() {
   const handleAdminListFilter = (filter, source = "todos") => {
     setAdminListFilter(filter);
     setAdminCaseSourceFilter(source);
+    if (source === "rfa") setFilterPriority("");
     setPage(1);
   };
 
@@ -994,6 +1148,53 @@ export default function Dashboard() {
     }
   };
 
+  const handleDownloadReceiptHistory = async (caseId, receipt) => {
+    if (!caseId || !receipt?.id) return;
+    setDownloadingReceiptCaseId(caseId);
+    setError("");
+    try {
+      const token = getToken();
+      const apiBase = process.env.REACT_APP_BACKEND_URL ? `${process.env.REACT_APP_BACKEND_URL}/api` : "/api";
+      const response = await fetch(`${apiBase}/cases/${encodeURIComponent(caseId)}/payment-receipts/${encodeURIComponent(receipt.id)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      if (!response.ok) throw new Error("No se pudo descargar el comprobante.");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = receipt.original_filename || `comprobante_${receipt.id}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message || "No se pudo descargar el comprobante.");
+    } finally {
+      setDownloadingReceiptCaseId(null);
+    }
+  };
+
+  const confirmCasePayment = async (caseId, receiptId) => {
+    setSubmitting(true);
+    setError("");
+    try {
+      const result = await apiRequest(`/cases/${encodeURIComponent(caseId)}/payment-confirm`, {
+        method: "POST",
+        body: JSON.stringify(receiptId ? { receipt_id: receiptId } : {})
+      });
+      setCases((current) => current.map((item) => item.id === caseId
+        ? { ...item, ...(result.case || {}), payment_receipts: result.payment_receipts || item.payment_receipts, payment_receipt_pending: false }
+        : item));
+      setAdminSaveNotice("Pago confirmado correctamente.");
+      await loadCases();
+    } catch (err) {
+      setError(err.message || "No se pudo confirmar el pago.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleCreateCase = async (event) => {
     event.preventDefault();
     if (!String(emailContacto || "").trim()) {
@@ -1043,6 +1244,7 @@ export default function Dashboard() {
       setAdjuntos([]);
       if (isPublicCreateMode) {
         setPublicCaseCode(created?.case_code || "");
+        setCopiedPublicCaseCode(false);
       } else {
         await loadCases();
       }
@@ -1050,6 +1252,16 @@ export default function Dashboard() {
       setError(err.message);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const copyPublicCaseCode = async () => {
+    if (!publicCaseCode) return;
+    try {
+      await navigator.clipboard.writeText(publicCaseCode);
+      setCopiedPublicCaseCode(true);
+    } catch {
+      setError("No se pudo copiar automáticamente. Seleccioná y copiá el número de caso.");
     }
   };
 
@@ -1234,6 +1446,7 @@ export default function Dashboard() {
 
   const handleSaveAllPendingChanges = async () => {
     if (!hasUnsavedChanges) return;
+    if (isAdmin && !hasAdminCaseEdits && !isEnterprise) return;
     setSubmitting(true);
     setError("");
     try {
@@ -1272,6 +1485,8 @@ export default function Dashboard() {
         });
         setAdminNote("");
         setAdminPublicMessage("");
+        setPersonaV2InfoRequestCaseId("");
+        setPersonaV2InfoRequestText("");
         setAdminStatus("");
         setAdminPriority("");
         setAdminRisk("");
@@ -1279,6 +1494,7 @@ export default function Dashboard() {
         setAdminQuotedAmount("");
         setAdminQuotedScope("");
         setAdminCommercialStatus("");
+        setAdminCommunicationMode("");
       }
 
       await loadCases();
@@ -1301,6 +1517,8 @@ export default function Dashboard() {
     if (isAdmin) {
       setAdminNote("");
       setAdminPublicMessage("");
+      setPersonaV2InfoRequestCaseId("");
+      setPersonaV2InfoRequestText("");
       setAdminStatus("");
       setAdminPriority("");
       setAdminRisk("");
@@ -1308,6 +1526,9 @@ export default function Dashboard() {
       setAdminQuotedAmount("");
       setAdminQuotedScope("");
       setAdminCommercialStatus("");
+      setAdminCommunicationMode("");
+      setAdminOfferDrafts(emptyServiceOfferDrafts());
+      setAdminOffersDirty(false);
       setAdminSaveNotice("");
     }
     setError("");
@@ -1321,6 +1542,7 @@ export default function Dashboard() {
       const [caseData, updatesData] = await Promise.all([caseRequest, updatesRequest]);
       if (caseData) {
         setCases((prev) => prev.map((item) => item.id === caseId ? { ...item, ...caseData } : item));
+        setAdminOfferDrafts(serviceOfferDraftsFromOffers(caseData.service_offers || []));
       }
       if (!updates[caseId]) {
         setUpdates((prev) => ({ ...prev, [caseId]: updatesData || [] }));
@@ -1346,6 +1568,8 @@ export default function Dashboard() {
       });
       setAdminNote("");
       setAdminPublicMessage("");
+      setPersonaV2InfoRequestCaseId("");
+      setPersonaV2InfoRequestText("");
       setAdminStatus("");
       setAdminPriority("");
       setAdminRisk("");
@@ -1353,6 +1577,7 @@ export default function Dashboard() {
       setAdminQuotedAmount("");
       setAdminQuotedScope("");
       setAdminCommercialStatus("");
+      setAdminCommunicationMode("");
       if (result?.case) {
         setCases((prev) => prev.map((item) => item.id === caseId ? { ...item, ...result.case } : item));
       }
@@ -1377,10 +1602,7 @@ export default function Dashboard() {
       navigator
         .share({ title: post.title, text: shareText, url: shareUrl })
         .catch(() => {});
-      return;
     }
-    const waUrl = `https://wa.me/text=${encodeURIComponent(`${shareText} ${shareUrl}`)}`;
-    window.open(waUrl, "_blank");
   };
 
   const startEnterpriseColumnResize = (columnKey, event) => {
@@ -1409,28 +1631,95 @@ export default function Dashboard() {
     document.addEventListener("mouseup", onMouseUp);
   };
 
-  const buildAdminUpdatePayload = () => {
+  const buildAdminUpdatePayload = (caseItem = casesById.get(expandedCaseId)) => {
     const publicMessage = String(adminPublicMessage || "").trim();
+    const isNewCommercialFlow = Number(caseItem?.commercial_flow_version) >= 2;
     const payload = {
       mensaje: publicMessage || undefined,
       message_visibility: publicMessage ? "public" : "rfa_internal",
-      estado: adminStatus || null,
-      prioridad: adminPriority || null,
-      riesgo: adminRisk || null,
-      observaciones_rfa: adminNote !== "" ? adminNote : undefined,
-      service_code: adminServiceCode || undefined,
-      quoted_amount: adminQuotedAmount !== "" ? adminQuotedAmount : undefined,
-      quoted_scope: adminQuotedScope !== "" ? adminQuotedScope : undefined,
-      commercial_status: adminCommercialStatus || undefined,
-      quoted_currency: adminServiceCode || adminQuotedAmount || adminQuotedScope || adminCommercialStatus ? "ARS" : undefined
+      ...(!isNewCommercialFlow || caseItem?.enterprise_user_id ? { estado: adminStatus || null } : {}),
+      observaciones_rfa: adminNote !== "" ? adminNote : undefined
     };
+    if (!isNewCommercialFlow || caseItem?.enterprise_user_id) payload.riesgo = adminRisk || null;
+    if (caseItem?.enterprise_user_id) payload.prioridad = adminPriority || null;
+    if (!isNewCommercialFlow && !caseItem?.enterprise_user_id) {
+      Object.assign(payload, {
+        service_code: adminServiceCode || undefined,
+        quoted_amount: adminQuotedAmount !== "" ? adminQuotedAmount : undefined,
+        quoted_scope: adminQuotedScope !== "" ? adminQuotedScope : undefined,
+        commercial_status: adminCommercialStatus || undefined,
+        communication_mode: adminCommunicationMode === "__unset" ? null : adminCommunicationMode || undefined,
+        quoted_currency: adminServiceCode || adminQuotedAmount || adminQuotedScope || adminCommercialStatus ? "ARS" : undefined
+      });
+    }
     return payload;
+  };
+
+  const setServiceOfferDraftValue = (serviceCode, key, value) => {
+    setAdminOfferDrafts((current) => ({
+      ...current,
+      [serviceCode]: { ...current[serviceCode], [key]: value }
+    }));
+    setAdminOffersDirty(true);
+  };
+
+  const publishServiceOffers = async (caseId) => {
+    const offers = Object.entries(adminOfferDrafts)
+      .filter(([, draft]) => draft.enabled)
+      .map(([service_code, draft]) => ({
+        service_code,
+        quoted_amount: draft.quoted_amount,
+        quoted_currency: draft.quoted_currency,
+        quoted_scope: draft.quoted_scope,
+        available_communication_modes: service_code === "rfa-management" ? draft.available_communication_modes : []
+      }));
+    if (!offers.length) {
+      setError("Habilitá al menos una opción antes de publicar.");
+      return false;
+    }
+    const invalidOffer = offers.find((offer) => {
+      const amount = Number(offer.quoted_amount);
+      return !Number.isFinite(amount) || amount <= 0 ||
+        !["ARS", "USD"].includes(offer.quoted_currency) ||
+        !String(offer.quoted_scope || "").trim() ||
+        (offer.service_code === "rfa-management" && offer.available_communication_modes.length === 0);
+    });
+    if (invalidOffer) {
+      const message = invalidOffer.service_code === "rfa-management" && !invalidOffer.available_communication_modes.length
+        ? "Elegí al menos una modalidad para Gestión RFA."
+        : "Completá un precio válido, moneda y alcance para cada opción habilitada.";
+      setError(message);
+      return false;
+    }
+    setSubmitting(true);
+    setError("");
+    setAdminSaveNotice("");
+    try {
+      const result = await apiRequest(`/cases/${encodeURIComponent(caseId)}/service-offers`, {
+        method: "PUT",
+        body: JSON.stringify({ offers })
+      });
+      setCases((current) => current.map((item) => item.id === caseId
+        ? { ...item, ...(result.case || {}), service_offers: result.offers || offers.map((offer) => ({ ...offer, status: "published" })) }
+        : item));
+      setAdminOfferDrafts(serviceOfferDraftsFromOffers(result.offers));
+      setAdminOffersDirty(false);
+      setAdminSaveNotice("Opciones publicadas correctamente.");
+      return true;
+    } catch (err) {
+      setError(err.message || "No se pudieron publicar las opciones.");
+      return false;
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const renderAdminManagementPanel = (c) => {
     const isEnterpriseCase = Boolean(c.enterprise_user_id);
+    const isNewCommercialFlow = !isEnterpriseCase && Number(c.commercial_flow_version) >= 2;
     const currentService = getCaseServiceValue(c) || analysisService.code;
     const currentCommercialStatus = getEffectiveCommercialStatus(c);
+    const proposalAlreadyAccepted = Boolean(c.proposal_accepted_at) || ["accepted", "payment_pending", "paid"].includes(currentCommercialStatus);
     const attachments = parseArray(c.adjuntos);
 
     return (
@@ -1485,12 +1774,12 @@ export default function Dashboard() {
         <section className="rounded-xl border border-white/10 bg-white/5 p-4">
           <h4 className="mb-3 text-sm font-semibold text-amber-100">C. Análisis RFA</h4>
           <div className="grid gap-3 md:grid-cols-3">
-            <label className="text-xs text-slate-300">Estado operativo
+            {!isNewCommercialFlow && <label className="text-xs text-slate-300">Estado operativo
               <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminStatus} onChange={(event) => { const value = event.target.value; setAdminStatus(value); if (!isEnterpriseCase && statusTemplates[value]) setAdminPublicMessage(statusTemplates[value]); }}>
                 <option value="">Mantener: {getOperationalStatusLabel(c.estado)}</option>
                 {(isEnterpriseCase ? enterpriseStatusOptions.map((label) => ({ code: label, label })) : statusOptions).map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
               </select>
-            </label>
+            </label>}
             <label className="text-xs text-slate-300">Prioridad
               <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminPriority} onChange={(event) => setAdminPriority(event.target.value)}>
                 <option value="">Mantener: {c.prioridad || "Pendiente"}</option>
@@ -1521,17 +1810,17 @@ export default function Dashboard() {
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               <label className="text-xs text-slate-300">Servicio
-                <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminServiceCode} onChange={(event) => setAdminServiceCode(event.target.value)}>
+                <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white disabled:cursor-not-allowed disabled:opacity-60" value={adminServiceCode} disabled={proposalAlreadyAccepted} onChange={(event) => setAdminServiceCode(event.target.value)}>
                   <option value="">Mantener: {getServiceDisplayName(currentService)}</option>
                   <option value={analysisService.code}>{analysisService.name}</option>
                   {plans.map((service) => <option key={service.code} value={service.code}>{service.name}</option>)}
                 </select>
               </label>
               <label className="text-xs text-slate-300">Precio del servicio (ARS)
-                <input type="number" min="1" step="1" className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminQuotedAmount} onChange={(event) => setAdminQuotedAmount(event.target.value)} placeholder={c.quoted_amount ? String(c.quoted_amount) : "Ej.: 65000"} />
+                <input type="number" min="1" step="1" className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white disabled:cursor-not-allowed disabled:opacity-60" value={adminQuotedAmount} disabled={proposalAlreadyAccepted} onChange={(event) => setAdminQuotedAmount(event.target.value)} placeholder={c.quoted_amount ? String(c.quoted_amount) : "Ej.: 65000"} />
               </label>
               <label className="text-xs text-slate-300 md:col-span-2">Alcance acordado para este caso
-                <textarea className="mt-1 min-h-[120px] w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white placeholder:text-slate-500" value={adminQuotedScope} onChange={(event) => setAdminQuotedScope(event.target.value)} placeholder={c.quoted_scope || "Detallá entregables, seguimiento y límites del servicio"} />
+                <textarea className="mt-1 min-h-[120px] w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white placeholder:text-slate-500 disabled:cursor-not-allowed disabled:opacity-60" value={adminQuotedScope} disabled={proposalAlreadyAccepted} onChange={(event) => setAdminQuotedScope(event.target.value)} placeholder={c.quoted_scope || "Detallá entregables, seguimiento y límites del servicio"} />
               </label>
               <label className="text-xs text-slate-300 md:col-span-2">Situación comercial
                 <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminCommercialStatus} onChange={(event) => setAdminCommercialStatus(event.target.value)}>
@@ -1564,7 +1853,7 @@ export default function Dashboard() {
           </div>
         </section>
 
-        <Button className="bg-emerald-500 text-white hover:bg-emerald-600" onClick={() => handleAdminUpdate(c.id)} disabled={submitting || !hasUnsavedChanges}>
+        <Button className="bg-emerald-500 text-white hover:bg-emerald-600" onClick={() => handleAdminUpdate(c.id)} disabled={submitting || (isNewCommercialFlow ? !hasAdminCaseEdits : !hasUnsavedChanges)}>
           {submitting ? "Guardando..." : "Guardar cambios del caso"}
         </Button>
       </div>
@@ -1576,19 +1865,27 @@ export default function Dashboard() {
     const isEnterpriseCase = Boolean(c.enterprise_user_id);
     const currentService = getCaseServiceValue(c) || analysisService.code;
     const currentCommercialStatus = getEffectiveCommercialStatus(c);
+    const proposalAlreadyAccepted = Boolean(c.proposal_accepted_at) || ["accepted", "payment_pending", "paid"].includes(currentCommercialStatus);
+    const currentCommunicationMode = c.communication_mode === "rfa_managed"
+      ? "RFA gestiona las comunicaciones"
+      : c.communication_mode === "client_sends"
+        ? "El cliente envía las comunicaciones preparadas por RFA"
+        : "Sin definir";
+    let acceptedSnapshot = null;
+    try { acceptedSnapshot = c.accepted_proposal_snapshot ? JSON.parse(c.accepted_proposal_snapshot) : null; } catch { acceptedSnapshot = null; }
+    const isNewCommercialFlow = !isEnterpriseCase && Number(c.commercial_flow_version) >= 2;
+    const receiptHistory = Array.isArray(c.payment_receipts) ? c.payment_receipts : [];
     const attachments = parseArray(c.adjuntos);
     const history = updates[c.id] || [];
     const missingDocuments = c.documentacion_faltante || c.documentacion_faltantes || c.faltantes;
-    const hasCommercialData = !isEnterpriseCase && Boolean(
-      getCaseServiceValue(c) || c.commercial_status || c.quoted_amount || c.quoted_currency ||
-      c.quoted_scope || c.quoted_at || c.proposal_accepted_at || c.payment_confirmed_at
-    );
+    const hasCommercialData = !isEnterpriseCase;
     const tabs = [
       { value: "summary", label: "Resumen" },
       { value: "documentation", label: "Documentacion" },
       { value: "management", label: "Gestion" },
       ...(hasCommercialData ? [{ value: "commercial", label: "Comercial" }] : []),
-      { value: "activity", label: "Actividad" }
+      { value: "activity", label: "Actividad" },
+      ...(!isEnterpriseCase ? [{ value: "conversations", label: "Conversaciones" }] : [])
     ];
     const infoItem = (label, value, className = "") => (
       <div className={className}>
@@ -1609,9 +1906,10 @@ export default function Dashboard() {
             <p className="mt-1 text-sm text-slate-400">{c.nombre_completo || "Sin nombre"} · {isEnterpriseCase ? "Caso empresa" : "Persona"}</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusBadge(c.estado)}`}>{getOperationalStatusLabel(c.estado)}</span>
-            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getPriorityBadge(c.prioridad)}`}>{c.prioridad || "Pendiente"}</span>
-            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${normalizeRiskValue(c.riesgo) ? getRiskBadge(normalizeRiskValue(c.riesgo)) : "bg-amber-500/25 text-amber-200"}`}>{normalizeRiskValue(c.riesgo) || "Sin clasificar"}</span>
+            {!isNewCommercialFlow && <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusBadge(c.estado)}`}>{getOperationalStatusLabel(c.estado)}</span>}
+            {isNewCommercialFlow && <span className="inline-flex rounded-full bg-sky-400/15 px-2.5 py-1 text-xs font-semibold text-sky-100">{getDashboardCaseStageLabel(c)}</span>}
+            {isEnterpriseCase && <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getPriorityBadge(c.prioridad)}`}>{c.prioridad || "Pendiente"}</span>}
+            {(!isNewCommercialFlow || isEnterpriseCase) && <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${normalizeRiskValue(c.riesgo) ? getRiskBadge(normalizeRiskValue(c.riesgo)) : "bg-amber-500/25 text-amber-200"}`}>{normalizeRiskValue(c.riesgo) || "Sin clasificar"}</span>}
           </div>
         </div>
 
@@ -1645,6 +1943,13 @@ export default function Dashboard() {
                 <p className="text-[11px] uppercase tracking-wide text-slate-500">Descripcion completa</p>
                 <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-100">{c.relato || c.detalle || "-"}</p>
               </div>
+              {!isEnterpriseCase && <div className="rounded-xl border border-sky-300/20 bg-sky-300/5 p-4">
+                <p className="text-[11px] uppercase tracking-wide text-slate-400">{isNewCommercialFlow ? "Etapa" : "Próximo paso"}</p>
+                {isNewCommercialFlow && <p className="mt-1 text-sm font-semibold text-white">{getDashboardCaseStageLabel(c)}</p>}
+                {isNewCommercialFlow && <p className="mt-3 text-[11px] uppercase tracking-wide text-slate-400">Próximo paso</p>}
+                <p className="mt-1 text-sm font-semibold text-white">{getAdminNextStep(c)}</p>
+                {c.customer_communication_mode === "client_sends" && <p className="mt-2 text-xs text-sky-100">El cliente eligió enviar las comunicaciones preparadas por RFA. Podés habilitar Conversaciones para compartir los mensajes.</p>}
+              </div>}
             </section>
           )}
 
@@ -1675,24 +1980,77 @@ export default function Dashboard() {
           {adminDetailTab === "management" && (
             <section className="rounded-xl border border-white/10 bg-white/5 p-4">
               <div className="grid gap-4 md:grid-cols-3">
-                <label className="text-xs text-slate-300">Estado operativo
-                  <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminStatus} onChange={(event) => { const value = event.target.value; setAdminStatus(value); if (!isEnterpriseCase && statusTemplates[value]) setAdminPublicMessage(statusTemplates[value]); }}>
-                    <option value="">Mantener: {getOperationalStatusLabel(c.estado)}</option>
-                    {(isEnterpriseCase ? enterpriseStatusOptions.map((label) => ({ code: label, label })) : statusOptions).map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
-                  </select>
-                </label>
-                <label className="text-xs text-slate-300">Prioridad
+                {isNewCommercialFlow ? (
+                  <div className="md:col-span-3">
+                    <p className="text-xs text-slate-300">Etapa actual</p>
+                    <p className="mt-1 text-sm font-semibold text-white">{getDashboardCaseStageLabel(c)}</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {personaV2OperationalActions.map((action) => (
+                        <Button
+                          key={action.status}
+                          type="button"
+                          className="bg-white/10 text-white hover:bg-white/20"
+                          disabled={submitting}
+                          onClick={() => {
+                            if (action.requiresClientMessage) {
+                              setError("");
+                              setPersonaV2InfoRequestCaseId((current) => current === c.id ? "" : c.id);
+                              setPersonaV2InfoRequestText("");
+                            } else {
+                              handlePersonaV2OperationalAction(c, action.status);
+                            }
+                          }}
+                        >
+                          {action.label}
+                        </Button>
+                      ))}
+                    </div>
+                    {personaV2InfoRequestCaseId === c.id && (
+                      <div className="mt-4 rounded-lg border border-amber-300/20 bg-amber-300/5 p-3">
+                        <label className="block text-sm font-medium text-white" htmlFor={`persona-v2-info-request-${c.id}`}>¿Qué información necesitás del cliente?</label>
+                        <p className="mt-1 text-xs text-slate-300">Este texto se publicará en Consulta de caso. No se enviará nada hasta que lo confirmes.</p>
+                        <textarea
+                          id={`persona-v2-info-request-${c.id}`}
+                          aria-label="Información solicitada al cliente"
+                          className="mt-3 min-h-[110px] w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white placeholder:text-slate-500"
+                          value={personaV2InfoRequestText}
+                          onChange={(event) => setPersonaV2InfoRequestText(event.target.value)}
+                          placeholder="Detallá la información o documentación que necesitás..."
+                        />
+                        <div className="mt-3 flex flex-wrap justify-end gap-2">
+                          <Button type="button" className="bg-white/10 text-white hover:bg-white/20" onClick={() => { setPersonaV2InfoRequestCaseId(""); setPersonaV2InfoRequestText(""); }}>Cancelar</Button>
+                          <Button
+                            type="button"
+                            className="bg-sky-600 text-white hover:bg-sky-500"
+                            disabled={submitting || !personaV2InfoRequestText.trim()}
+                            onClick={() => handlePersonaV2OperationalAction(c, "needs_information", personaV2InfoRequestText)}
+                          >
+                            {submitting ? "Enviando..." : "Enviar solicitud al cliente"}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <label className="text-xs text-slate-300">Estado operativo
+                    <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminStatus} onChange={(event) => { const value = event.target.value; setAdminStatus(value); if (!isEnterpriseCase && statusTemplates[value]) setAdminPublicMessage(statusTemplates[value]); }}>
+                      <option value="">Mantener: {getOperationalStatusLabel(c.estado)}</option>
+                      {(isEnterpriseCase ? enterpriseStatusOptions.map((label) => ({ code: label, label })) : statusOptions).map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
+                    </select>
+                  </label>
+                )}
+                {isEnterpriseCase && <label className="text-xs text-slate-300">Prioridad
                   <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminPriority} onChange={(event) => setAdminPriority(event.target.value)}>
                     <option value="">Mantener: {c.prioridad || "Pendiente"}</option>
                     {priorityOptions.map((priority) => <option key={priority} value={priority}>{priority}</option>)}
                   </select>
-                </label>
-                <label className="text-xs text-slate-300">Riesgo
+                </label>}
+                {!isNewCommercialFlow && <label className="text-xs text-slate-300">Riesgo
                   <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminRisk} onChange={(event) => setAdminRisk(event.target.value)}>
                     <option value="">Mantener: {normalizeRiskValue(c.riesgo) || "Sin clasificar"}</option>
                     {riskOptions.map((risk) => <option key={risk} value={risk}>{risk}</option>)}
                   </select>
-                </label>
+                </label>}
                 <label className="text-xs text-slate-300 md:col-span-3">Observacion interna RFA
                   <span className="ml-2 text-[11px] text-amber-200">Solo visible para administracion RFA</span>
                   <textarea className="mt-1 min-h-[130px] w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white placeholder:text-slate-500" value={adminNote} onChange={(event) => setAdminNote(event.target.value)} placeholder={c.observaciones_rfa || "Escribi una observacion interna"} />
@@ -1703,34 +2061,135 @@ export default function Dashboard() {
 
           {adminDetailTab === "commercial" && hasCommercialData && (
             <section className="rounded-xl border border-amber-300/25 bg-amber-300/5 p-4">
+              {isNewCommercialFlow ? (
+                <div className="space-y-5">
+                  <div className="grid gap-3 text-sm text-slate-300 sm:grid-cols-2 lg:grid-cols-4">
+                    {infoItem("Etapa", getDashboardCaseStageLabel(c))}
+                    {infoItem("Próximo paso", getAdminNextStep(c))}
+                    {infoItem("Fecha de aceptación", c.proposal_accepted_at ? formatDateTimeAr(c.proposal_accepted_at) : "-")}
+                    {infoItem("Pago confirmado", c.payment_confirmed_at ? formatDateTimeAr(c.payment_confirmed_at) : "-")}
+                  </div>
+                  {acceptedSnapshot && (
+                    <div className="rounded-xl border border-emerald-300/20 bg-emerald-300/5 p-4">
+                      <h4 className="font-semibold text-white">Opción elegida y aceptada</h4>
+                      <div className="mt-3 grid gap-3 text-sm text-slate-200 md:grid-cols-2">
+                        {infoItem("Servicio", getServiceDisplayName(acceptedSnapshot.service_code))}
+                        {infoItem("Precio", formatQuotedAmount(acceptedSnapshot.amount, acceptedSnapshot.currency))}
+                        {acceptedSnapshot.communication_mode && infoItem("Modalidad elegida por el cliente", acceptedSnapshot.communication_mode === "rfa_managed" ? "RFA gestiona las comunicaciones" : "El cliente envía las comunicaciones preparadas por RFA", "md:col-span-2")}
+                        {infoItem("Alcance aceptado", acceptedSnapshot.scope, "md:col-span-2")}
+                        {infoItem("Aceptación registrada", acceptedSnapshot.accepted_at || c.proposal_accepted_at || "-", "md:col-span-2")}
+                      </div>
+                      {acceptedSnapshot.communication_mode === "client_sends" && <p className="mt-3 text-xs text-sky-100">El cliente eligió enviar las comunicaciones. Podés habilitar Conversaciones para compartir los mensajes.</p>}
+                    </div>
+                  )}
+                  {currentCommercialStatus === "analysis" && (
+                    <div className="space-y-4">
+                      <div>
+                        <h4 className="font-semibold text-white">Opciones para este caso</h4>
+                        <p className="mt-1 text-xs text-slate-400">Habilitá una o ambas alternativas. El cliente elegirá cuál acepta.</p>
+                      </div>
+                      {[
+                        ["professional-folder", "Carpeta Profesional"],
+                        ["rfa-management", "Gestión RFA"]
+                      ].map(([code, label]) => {
+                        const draft = adminOfferDrafts[code] || emptyServiceOfferDrafts()[code];
+                        return <fieldset key={code} className="rounded-xl border border-white/10 bg-slate-950/20 p-4">
+                          <label className="flex items-center gap-2 font-semibold text-white">
+                            <input type="checkbox" checked={draft.enabled} onChange={(event) => setServiceOfferDraftValue(code, "enabled", event.target.checked)} />
+                            {label}
+                          </label>
+                          {draft.enabled && <div className="mt-4 grid gap-3 md:grid-cols-2">
+                            <label className="text-xs text-slate-300">Precio
+                              <input type="number" min="1" step="1" value={draft.quoted_amount} onChange={(event) => setServiceOfferDraftValue(code, "quoted_amount", event.target.value)} className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" />
+                            </label>
+                            <label className="text-xs text-slate-300">Moneda
+                              <select value={draft.quoted_currency} onChange={(event) => setServiceOfferDraftValue(code, "quoted_currency", event.target.value)} className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white"><option value="ARS">ARS</option><option value="USD">USD</option></select>
+                            </label>
+                            <label className="text-xs text-slate-300 md:col-span-2">Alcance
+                              <textarea value={draft.quoted_scope} onChange={(event) => setServiceOfferDraftValue(code, "quoted_scope", event.target.value)} className="mt-1 min-h-[90px] w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" />
+                            </label>
+                            {code === "rfa-management" && <fieldset className="md:col-span-2">
+                              <legend className="text-xs text-slate-300">Modalidades disponibles para que el cliente elija</legend>
+                              {[["rfa_managed", "RFA gestiona las comunicaciones"], ["client_sends", "El cliente envía las comunicaciones preparadas por RFA"]].map(([mode, modeLabel]) => <label key={mode} className="mt-2 flex items-center gap-2 text-sm text-slate-200">
+                                <input type="checkbox" checked={draft.available_communication_modes.includes(mode)} onChange={(event) => setServiceOfferDraftValue(code, "available_communication_modes", event.target.checked ? [...draft.available_communication_modes, mode] : draft.available_communication_modes.filter((item) => item !== mode))} />
+                                {modeLabel}
+                              </label>)}
+                            </fieldset>}
+                          </div>}
+                        </fieldset>;
+                      })}
+                      {(c.service_offers || []).some((offer) => offer.status === "published") && <div className="rounded-lg border border-white/10 p-3">
+                        <p className="text-xs font-semibold text-slate-300">Opciones actualmente publicadas</p>
+                        <div className="mt-2 space-y-2">{c.service_offers.filter((offer) => offer.status === "published").map((offer) => <p key={offer.id} className="text-sm text-slate-200">{getServiceDisplayName(offer.service_code)} · {formatQuotedAmount(offer.quoted_amount, offer.quoted_currency)} · {offer.quoted_scope}</p>)}</div>
+                      </div>}
+                      <Button type="button" className="bg-sky-600 text-white hover:bg-sky-500" onClick={() => publishServiceOffers(c.id)} disabled={submitting}>{submitting ? "Publicando..." : "Publicar opciones"}</Button>
+                    </div>
+                  )}
+                  {currentCommercialStatus === "proposal_sent" && <div className="space-y-3 rounded-xl border border-sky-300/20 bg-slate-950/20 p-4">
+                    <div>
+                      <h4 className="font-semibold text-white">Opciones publicadas</h4>
+                      <p className="mt-1 text-sm text-slate-300">Esperando elección del cliente.</p>
+                    </div>
+                    {(c.service_offers || []).filter((offer) => offer.status === "published").map((offer) => (
+                      <article key={offer.id} className="rounded-lg border border-white/10 p-3">
+                        <h5 className="font-semibold text-white">{getServiceDisplayName(offer.service_code)}</h5>
+                        <p className="mt-1 text-sm text-slate-200">{formatQuotedAmount(offer.quoted_amount, offer.quoted_currency)}</p>
+                        <p className="mt-2 whitespace-pre-wrap text-sm text-slate-300">{offer.quoted_scope}</p>
+                        {offer.service_code === "rfa-management" && <p className="mt-2 text-xs text-slate-300">Modalidades disponibles: {(offer.available_communication_modes || []).map((mode) => mode === "rfa_managed" ? "RFA gestiona las comunicaciones" : "El cliente envía las comunicaciones preparadas por RFA").join(" · ") || "-"}</p>}
+                      </article>
+                    ))}
+                    {!(c.service_offers || []).some((offer) => offer.status === "published") && <p className="text-sm text-amber-100">Las opciones publicadas no están disponibles en esta respuesta del caso.</p>}
+                  </div>}
+                  {["payment_pending", "paid"].includes(currentCommercialStatus) && <div className="rounded-xl border border-amber-300/20 bg-amber-300/5 p-4">
+                    <h4 className="font-semibold text-white">Comprobantes de pago</h4>
+                    {receiptHistory.length === 0 && <p className="mt-2 text-sm text-slate-400">Aún no se recibió un comprobante.</p>}
+                    <div className="mt-3 space-y-2">{receiptHistory.map((receipt) => <div key={receipt.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/10 p-3">
+                      <div><p className="text-sm text-white">{receipt.original_filename}</p><p className="text-xs text-slate-400">{formatDateTimeAr(receipt.uploaded_at)} · {receipt.status === "pending" ? "Comprobante recibido — requiere verificación" : receipt.status === "verified" ? "Verificado" : receipt.status === "superseded" ? "Reemplazado; conservado en historial" : "Rechazado"}</p></div>
+                      <div className="flex flex-wrap gap-2"><Button type="button" className="bg-white/10 text-white hover:bg-white/20" onClick={() => handleDownloadReceiptHistory(c.id, receipt)} disabled={downloadingReceiptCaseId === c.id}>Ver comprobante</Button>{currentCommercialStatus === "payment_pending" && receipt.status === "pending" && <Button type="button" className="bg-emerald-600 text-white hover:bg-emerald-500" onClick={() => confirmCasePayment(c.id, receipt.id)} disabled={submitting}>Confirmar pago</Button>}</div>
+                    </div>)}</div>
+                  </div>}
+                  {currentCommercialStatus === "paid" && <p className="rounded-lg border border-emerald-300/20 bg-emerald-300/5 p-3 text-sm text-emerald-100">Pago confirmado por RFA. El servicio está activo.</p>}
+                </div>
+              ) : (
+                <>
               <div className="grid gap-4 text-sm text-slate-300 md:grid-cols-2 lg:grid-cols-4">
                 {infoItem("Servicio RFA", getServiceDisplayName(currentService))}
                 {infoItem("Situacion comercial", getCommercialStatusLabel(currentCommercialStatus))}
                 {infoItem("Precio", formatQuotedAmount(c.quoted_amount, c.quoted_currency))}
                 {infoItem("Moneda", c.quoted_currency)}
+                {infoItem("Modalidad de comunicaciones", currentCommunicationMode, "lg:col-span-2")}
                 {infoItem("Propuesta enviada", c.quoted_at ? formatDateTimeAr(c.quoted_at) : "-", "lg:col-span-2")}
                 {infoItem("Aceptacion", c.proposal_accepted_at ? formatDateTimeAr(c.proposal_accepted_at) : "-", "lg:col-span-2")}
                 {infoItem("Pago confirmado", c.payment_confirmed_at ? formatDateTimeAr(c.payment_confirmed_at) : "-", "lg:col-span-2")}
               </div>
               <div className="mt-4 grid gap-4 md:grid-cols-2">
                 <label className="text-xs text-slate-300">Servicio
-                  <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminServiceCode} onChange={(event) => setAdminServiceCode(event.target.value)}>
+                  <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white disabled:cursor-not-allowed disabled:opacity-60" value={adminServiceCode} disabled={proposalAlreadyAccepted} onChange={(event) => setAdminServiceCode(event.target.value)}>
                     <option value="">Mantener: {getServiceDisplayName(currentService)}</option>
                     <option value={analysisService.code}>{analysisService.name}</option>
                     {plans.map((service) => <option key={service.code} value={service.code}>{service.name}</option>)}
                   </select>
                 </label>
                 <label className="text-xs text-slate-300">Precio del servicio (ARS)
-                  <input type="number" min="1" step="1" className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminQuotedAmount} onChange={(event) => setAdminQuotedAmount(event.target.value)} placeholder={c.quoted_amount ? String(c.quoted_amount) : "Ej.: 65000"} />
+                  <input type="number" min="1" step="1" className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white disabled:cursor-not-allowed disabled:opacity-60" value={adminQuotedAmount} disabled={proposalAlreadyAccepted} onChange={(event) => setAdminQuotedAmount(event.target.value)} placeholder={c.quoted_amount ? String(c.quoted_amount) : "Ej.: 65000"} />
                 </label>
                 <label className="text-xs text-slate-300 md:col-span-2">Alcance acordado
-                  <textarea className="mt-1 min-h-[120px] w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white placeholder:text-slate-500" value={adminQuotedScope} onChange={(event) => setAdminQuotedScope(event.target.value)} placeholder={c.quoted_scope || "Detalle del alcance del servicio"} />
+                  <textarea className="mt-1 min-h-[120px] w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white placeholder:text-slate-500 disabled:cursor-not-allowed disabled:opacity-60" value={adminQuotedScope} disabled={proposalAlreadyAccepted} onChange={(event) => setAdminQuotedScope(event.target.value)} placeholder={c.quoted_scope || "Detalle del alcance del servicio"} />
                 </label>
                 <label className="text-xs text-slate-300 md:col-span-2">Situacion comercial
                   <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white" value={adminCommercialStatus} onChange={(event) => setAdminCommercialStatus(event.target.value)}>
                     <option value="">Mantener: {getCommercialStatusLabel(currentCommercialStatus)}</option>
                     {commercialStatusOptions.map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
                   </select>
+                </label>
+                <label className="text-xs text-slate-300 md:col-span-2">Modalidad de comunicaciones
+                  <select className="mt-1 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white disabled:cursor-not-allowed disabled:opacity-60" value={adminCommunicationMode} disabled={proposalAlreadyAccepted} onChange={(event) => setAdminCommunicationMode(event.target.value)}>
+                    <option value="">Mantener: {currentCommunicationMode}</option>
+                    <option value="__unset">Sin definir</option>
+                    <option value="rfa_managed">RFA gestiona las comunicaciones</option>
+                    <option value="client_sends">El cliente envía las comunicaciones preparadas por RFA</option>
+                  </select>
+                  {proposalAlreadyAccepted && <span className="mt-1 block text-[11px] text-slate-400">La modalidad queda fija después de aceptar la propuesta.</span>}
                 </label>
               </div>
               {!isEnterpriseCase && ["proposal_sent", "payment_pending"].includes(currentCommercialStatus) && (
@@ -1748,6 +2207,8 @@ export default function Dashboard() {
                   )}
                 </div>
               )}
+                </>
+              )}
             </section>
           )}
 
@@ -1756,6 +2217,7 @@ export default function Dashboard() {
               {!isEnterpriseCase && (
                 <label className="block text-xs text-slate-300">Mensaje publico para el cliente
                   <textarea className="mt-1 min-h-[100px] w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-white placeholder:text-slate-500" value={adminPublicMessage} onChange={(event) => setAdminPublicMessage(event.target.value)} placeholder="Solo este texto sera visible en Consultar caso" />
+                  {isNewCommercialFlow && <span className="mt-1 block text-[11px] text-slate-400">Solo se publicará si escribís un mensaje y confirmás con Guardar cambios del caso.</span>}
                 </label>
               )}
               <div className="relative space-y-3 pl-5 before:absolute before:bottom-2 before:left-[5px] before:top-2 before:w-px before:bg-white/15">
@@ -1767,7 +2229,9 @@ export default function Dashboard() {
                         <p className="text-[11px] uppercase tracking-wide text-sky-300">{formatDateTimeAr(update.created_at)}</p>
                         <h4 className="mt-1 text-sm font-semibold text-white">{update.estado ? `Estado: ${getOperationalStatusLabel(update.estado)}` : "Registro de actividad"}</h4>
                       </div>
-                      <span className="text-[10px] uppercase tracking-wide text-slate-500">{update.visibility === "rfa_internal" ? "Interna RFA" : update.visibility === "enterprise_internal" ? "Interna empresa" : "Publica"}</span>
+                      <span className="text-[10px] uppercase tracking-wide text-slate-400">{isNewCommercialFlow
+                        ? update.visibility === "rfa_internal" ? "Interna RFA · Solo RFA" : update.visibility === "public" ? "Visible al cliente" : "Interna"
+                        : update.visibility === "rfa_internal" ? "Interna RFA" : update.visibility === "enterprise_internal" ? "Interna empresa" : "Publica"}</span>
                     </div>
                     <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-slate-300">{update.mensaje || "Sin contenido"}</p>
                   </article>
@@ -1775,12 +2239,29 @@ export default function Dashboard() {
               </div>
             </section>
           )}
+
+          {adminDetailTab === "conversations" && !isEnterpriseCase && (
+            <CaseConversations
+              mode="admin"
+              caseId={c.id}
+              onPendingChange={(pending) => setCases((current) => {
+                let changed = false;
+                const nextValue = pending ? 1 : 0;
+                const next = current.map((item) => {
+                  if (item.id !== c.id || Number(item.conversation_pending_admin_attention || 0) === nextValue) return item;
+                  changed = true;
+                  return { ...item, conversation_pending_admin_attention: nextValue };
+                });
+                return changed ? next : current;
+              })}
+            />
+          )}
         </div>
 
         <div className="mt-5 flex justify-end border-t border-white/10 pt-4">
           <div className="flex flex-wrap items-center justify-end gap-3">
             {adminSaveNotice && <p className="text-xs text-emerald-300" role="status" aria-live="polite">{adminSaveNotice}</p>}
-            <Button type="button" className="bg-sky-600 text-white hover:bg-sky-500" onClick={() => handleAdminUpdate(c.id)} disabled={submitting || !hasUnsavedChanges}>
+            <Button type="button" className="bg-sky-600 text-white hover:bg-sky-500" onClick={() => handleAdminUpdate(c.id)} disabled={submitting || (isNewCommercialFlow ? !hasAdminCaseEdits : !hasUnsavedChanges)}>
               {submitting ? "Guardando..." : "Guardar cambios del caso"}
             </Button>
           </div>
@@ -1791,7 +2272,7 @@ export default function Dashboard() {
 
   return (
     <div
-      className={isAdmin ? "rfa-admin-shell min-h-screen bg-[#071a3a] text-slate-100 px-4 md:px-6 py-16 pt-24" : isPublicCreateMode ? "rfa-public-create-page min-h-screen px-4 md:px-6 py-16 pt-24" : "min-h-screen text-slate-100 px-4 md:px-6 py-16 pt-24"}
+      className={isAdmin ? "rfa-admin-shell min-h-screen bg-[#071a3a] text-slate-100 px-4 md:px-6 py-16 pt-24" : isPublicCreateMode ? "rfa-public-create-page min-h-screen px-4 md:px-6 py-16 pt-24" : isEnterprise ? "rfa-enterprise-panel-shell min-h-screen text-slate-100 px-4 md:px-6 py-16 pt-24" : "min-h-screen text-slate-100 px-4 md:px-6 py-16 pt-24"}
       style={isPublicCreateMode ? { "--rfa-create-hero": "url('/images/rfa-home-01.png')" } : undefined}
     >
       <div className="max-w-[110rem] mx-auto">
@@ -1870,7 +2351,7 @@ export default function Dashboard() {
             ))}
           </div>
         )}
-        {hasUnsavedChanges && (
+        {hasUnsavedChanges && !isNewCommercialTab && (
           <div className="mb-6 rounded-xl border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200 flex flex-wrap items-center justify-between gap-3">
             <span>Tenés cambios sin guardar. Guardalos antes de salir de esta pantalla.</span>
             <Button
@@ -2066,8 +2547,19 @@ export default function Dashboard() {
                   </span>
                 </label>
                 {publicCaseCode && (
-                  <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-                    Caso cargado. Guarda tu ID de seguimiento: <strong>{publicCaseCode}</strong>
+                  <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-4 text-sm text-emerald-100" role="status" aria-live="polite">
+                    <p className="font-semibold">Caso recibido correctamente</p>
+                    <p className="mt-2 text-xs uppercase tracking-wide text-emerald-200/80">Tu número de caso</p>
+                    <p className="mt-1 text-xl font-bold text-white">{publicCaseCode}</p>
+                    <p className="mt-1">Guardá este número. Lo vas a necesitar para consultar el estado de tu caso.</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button type="button" className="bg-emerald-700 text-white hover:bg-emerald-600" onClick={copyPublicCaseCode}>
+                        {copiedPublicCaseCode ? "Número copiado" : "Copiar número de caso"}
+                      </Button>
+                      <Link to="/consultar-caso" className="inline-flex items-center rounded-md bg-white/10 px-4 py-2 text-sm font-medium text-white hover:bg-white/20">
+                        Consultar mi caso
+                      </Link>
+                    </div>
                   </div>
                 )}
                 {error && <p className="text-rose-300 text-sm">{error}</p>}
@@ -2111,11 +2603,11 @@ export default function Dashboard() {
                 </div>
                 {showAdminAdvancedFilters && (
                   <div className="mt-3 grid gap-3 border-t border-white/10 pt-3 md:grid-cols-2 lg:grid-cols-4">
-                    <select className="rounded-lg border border-white/15 bg-slate-950/45 px-3 py-2 text-white" value={filterPriority} onChange={(e) => setFilterPriority(e.target.value)}>
+                    {adminCaseSourceFilter !== "rfa" && <select className="rounded-lg border border-white/15 bg-slate-950/45 px-3 py-2 text-white" value={filterPriority} onChange={(e) => setFilterPriority(e.target.value)}>
                       <option value="">Prioridad</option>
                       {priorityOptions.map((priority) => <option key={priority} value={priority}>{priority}</option>)}
-                    </select>
-                    <select className="rounded-lg border border-white/15 bg-slate-950/45 px-3 py-2 text-white" value={adminCaseSourceFilter} onChange={(e) => setAdminCaseSourceFilter(e.target.value)}>
+                    </select>}
+                    <select className="rounded-lg border border-white/15 bg-slate-950/45 px-3 py-2 text-white" value={adminCaseSourceFilter} onChange={(e) => { setAdminCaseSourceFilter(e.target.value); if (e.target.value === "rfa") setFilterPriority(""); }}>
                       <option value="todos">Origen: todos</option>
                       <option value="rfa">Personas</option>
                       <option value="empresa">Empresas</option>
@@ -2263,9 +2755,10 @@ export default function Dashboard() {
                     <tbody>
                       {paginatedCases.map((c) => (
                         <Fragment key={c.id}>
-                          <tr className={`rfa-admin-case-row border-b border-white/10 align-top ${expandedCaseId === c.id ? "rfa-admin-case-row-active" : ""} ${isNewCase(c) ? "bg-emerald-500/10" : ""}`}>
+                          <tr className={`rfa-admin-case-row border-b border-white/10 align-top ${expandedCaseId === c.id ? "rfa-admin-case-row-active" : ""} ${hasPendingConversationReply(c) ? "!opacity-100 bg-sky-400/15 shadow-[inset_3px_0_0_#38bdf8]" : isNewCase(c) ? "bg-emerald-500/10" : ""}`}>
                             <td className="px-3 py-3">
                               <p className="text-sm font-medium text-slate-100">{c.case_code || c.id}</p>
+                              {hasPendingConversationReply(c) && <span className="mt-1 inline-flex max-w-full rounded-full border border-sky-300/40 bg-sky-400/15 px-2 py-0.5 text-[10px] font-semibold text-sky-100">Nueva respuesta</span>}
                               <p className="mt-1 text-xs text-slate-400">{formatDateTimeAr(c.created_at)}</p>
                             </td>
                             <td className="px-3 py-3">
@@ -2278,12 +2771,12 @@ export default function Dashboard() {
                               <p className="mt-1 text-[11px] text-slate-500">{c.enterprise_user_id ? "Empresa" : "RFA directo"}</p>
                               {adminCaseSourceFilter === "rfa" && <p className="mt-1 text-[11px] text-slate-500">Servicio: {getServiceDisplayName(getCaseServiceValue(c) || analysisService.code)}</p>}
                             </td>
-                            <td className="px-3 py-3"><span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${getStatusBadge(c.estado)}`}>{getOperationalStatusLabel(c.estado)}</span></td>
+                            <td className="px-3 py-3"><span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${getStatusBadge(c.estado)}`}>{getDashboardCaseStageLabel(c)}</span></td>
                             <td className="px-3 py-3">
                               <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${isAdminAttentionCase(c) ? "bg-amber-500/25 text-amber-100" : "bg-white/10 text-slate-300"}`}>
                                 {isAdminAttentionCase(c) ? "Requiere atención" : "Normal"}
                               </span>
-                              <p className="mt-1 text-[11px] text-slate-500">P: {c.prioridad || "Pendiente"} · R: {normalizeRiskValue(c.riesgo) || "Pendiente"}</p>
+                              {(c.enterprise_user_id || Number(c.commercial_flow_version) < 2) && <p className="mt-1 text-[11px] text-slate-500">{c.enterprise_user_id && <>P: {c.prioridad || "Pendiente"} · </>}R: {normalizeRiskValue(c.riesgo) || "Pendiente"}</p>}
                             </td>
                             <td className="px-3 py-3 text-xs text-slate-300">{formatDateTimeAr(c.updated_at || c.created_at)}</td>
                             <td className="px-3 py-3 text-right">
@@ -2330,7 +2823,7 @@ export default function Dashboard() {
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <span className={`inline-flex mt-1 px-2 py-1 rounded-full text-xs font-semibold ${getStatusBadge(c.estado)}`}>
-                      {getOperationalStatusLabel(c.estado)}
+                      {getDashboardCaseStageLabel(c)}
                     </span>
                     {getCaseServiceValue(c) && <p className="text-xs text-slate-400 mt-1">Servicio: {getServiceDisplayName(getCaseServiceValue(c))}</p>}
                     <p className="text-xs text-slate-400 mt-1">{formatDateAr(c.created_at)}</p>

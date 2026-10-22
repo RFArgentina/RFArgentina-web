@@ -99,8 +99,11 @@ export default function Enterprise() {
 
   return (
     <main className="rfa-enterprise">
-      <div className="rfa-enterprise__inner">
-        <section className="rfa-enterprise__hero">
+      <section
+        className="rfa-enterprise__hero rfa-home-image-section rfa-home-image-section-01 py-20 px-6"
+        style={{ "--rfa-home-image": "url('/images/rfa-home-01.png')" }}
+      >
+        <div className="rfa-enterprise__container rfa-enterprise__hero-inner grid md:grid-cols-[1.2fr_0.8fr] gap-10 items-center">
           <div className="rfa-enterprise__hero-copy">
             <p className="rfa-enterprise__eyebrow">Reclamos Financieros Argentina</p>
             <p className="rfa-enterprise__label">Soluciones para empresas</p>
@@ -122,9 +125,15 @@ export default function Enterprise() {
               <span>Seguimiento</span>
             </div>
           </aside>
-        </section>
+        </div>
+      </section>
 
-        <section className="rfa-enterprise__section rfa-enterprise__problem" aria-labelledby="enterprise-problem-title">
+      <section
+        className="rfa-enterprise__section rfa-enterprise__problem rfa-home-image-section rfa-home-image-section-02 py-10 px-6"
+        style={{ "--rfa-home-image": "url('/images/rfa-home-02.png')" }}
+        aria-labelledby="enterprise-problem-title"
+      >
+        <div className="rfa-enterprise__container">
           <div className="rfa-enterprise__section-heading">
             <p className="rfa-enterprise__kicker">El desafío operativo</p>
             <h2 id="enterprise-problem-title">Cuando el volumen crece, el problema deja de ser un caso aislado</h2>
@@ -133,9 +142,15 @@ export default function Enterprise() {
           <ul className="rfa-enterprise__issue-list">
             {operationalIssues.map((issue) => <li key={issue}>{issue}</li>)}
           </ul>
-        </section>
+        </div>
+      </section>
 
-        <section className="rfa-enterprise__section" aria-labelledby="enterprise-work-title">
+      <section
+        className="rfa-enterprise__section rfa-home-image-section rfa-home-image-section-03 py-20 px-6"
+        style={{ "--rfa-home-image": "url('/images/rfa-home-03.png')" }}
+        aria-labelledby="enterprise-work-title"
+      >
+        <div className="rfa-enterprise__container">
           <div className="rfa-enterprise__section-heading">
             <p className="rfa-enterprise__kicker">Un proceso claro</p>
             <h2 id="enterprise-work-title">Cómo trabaja RFA con tu empresa</h2>
@@ -149,9 +164,15 @@ export default function Enterprise() {
               </li>
             ))}
           </ol>
-        </section>
+        </div>
+      </section>
 
-        <section className="rfa-enterprise__section rfa-enterprise__visibility" aria-labelledby="enterprise-visibility-title">
+      <section
+        className="rfa-enterprise__section rfa-enterprise__visibility rfa-home-image-section rfa-home-image-section-04 py-10 px-6"
+        style={{ "--rfa-home-image": "url('/images/rfa-home-04.png')" }}
+        aria-labelledby="enterprise-visibility-title"
+      >
+        <div className="rfa-enterprise__container rfa-enterprise__visibility-inner">
           <div className="rfa-enterprise__section-heading">
             <p className="rfa-enterprise__kicker">Panel privado para empresas</p>
             <h2 id="enterprise-visibility-title">Visibilidad sobre cada caso desde un único lugar</h2>
@@ -181,9 +202,15 @@ export default function Enterprise() {
             <p className="rfa-enterprise__preview-caption">Vista ilustrativa · espacio para captura real</p>
           </div>
           <p className="rfa-enterprise__visibility-note">Panel privado para consulta, clasificación y seguimiento de los casos derivados.</p>
-        </section>
+        </div>
+      </section>
 
-        <section className="rfa-enterprise__section" aria-labelledby="enterprise-audience-title">
+      <section
+        className="rfa-enterprise__section rfa-enterprise__audience-section rfa-home-image-section rfa-home-image-section-05 py-20 px-6 bg-white/5 backdrop-blur-sm"
+        style={{ "--rfa-home-image": "url('/images/rfa-home-05.png')" }}
+        aria-labelledby="enterprise-audience-title"
+      >
+        <div className="rfa-enterprise__container">
           <div className="rfa-enterprise__section-heading">
             <p className="rfa-enterprise__kicker">Para equipos en crecimiento</p>
             <h2 id="enterprise-audience-title">Pensado para operaciones que necesitan más control</h2>
@@ -191,9 +218,15 @@ export default function Enterprise() {
           <ul className="rfa-enterprise__audience-list">
             {audience.map((item) => <li key={item}>{item}</li>)}
           </ul>
-        </section>
+        </div>
+      </section>
 
-        <section className="rfa-enterprise__proposal" aria-labelledby="enterprise-proposal-title">
+      <section
+        className="rfa-enterprise__proposal rfa-home-image-section rfa-home-image-section-06 py-20 px-6 bg-white/5 backdrop-blur-sm"
+        style={{ "--rfa-home-image": "url('/images/rfa-home-06.png')" }}
+        aria-labelledby="enterprise-proposal-title"
+      >
+        <div className="rfa-enterprise__container rfa-enterprise__proposal-inner">
           <div>
             <p className="rfa-enterprise__kicker">Alcance a medida</p>
             <h2 id="enterprise-proposal-title">Una propuesta adaptada a la operación</h2>
@@ -205,9 +238,16 @@ export default function Enterprise() {
             </div>
           </div>
           <a className="rfa-enterprise__button rfa-enterprise__button--secondary" href="#enterprise-form">Solicitar una propuesta</a>
-        </section>
+        </div>
+      </section>
 
-        <section className="rfa-enterprise__form-section" id="enterprise-form" aria-labelledby="enterprise-form-title">
+      <section
+        className="rfa-enterprise__form-section rfa-home-image-section rfa-home-image-section-07 py-20 px-6"
+        style={{ "--rfa-home-image": "url('/images/rfa-home-07.png')" }}
+        id="enterprise-form"
+        aria-labelledby="enterprise-form-title"
+      >
+        <div className="rfa-enterprise__container rfa-enterprise__form-inner">
           <div className="rfa-enterprise__form-intro">
             <p className="rfa-enterprise__kicker">Conversemos sobre tu operación</p>
             <h2 id="enterprise-form-title">Contanos cómo gestionan hoy sus reclamos</h2>
@@ -295,8 +335,8 @@ export default function Enterprise() {
             {sent && <p className="rfa-enterprise__success" role="status">Consulta enviada. Te contactamos a la brevedad.</p>}
             {error && <p className="rfa-enterprise__error" role="alert">{error}</p>}
           </form>
-        </section>
-      </div>
+        </div>
+      </section>
     </main>
   );
 }

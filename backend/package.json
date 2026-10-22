@@ -8,6 +8,7 @@
     "dev": "nodemon server.js",
     "start": "node server.js",
     "backup:db": "node scripts/backup-db.mjs",
+    "backup:snapshot": "node scripts/backup-db.mjs",
     "preflight:prod": "node scripts/preflight-prod.mjs",
     "release:check": "npm run backup:db && npm run preflight:prod"
   },

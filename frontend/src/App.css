@@ -312,7 +312,11 @@ h6 {
 }
 
 /* Admin panel: keep the existing layout, but use a calmer opaque surface system. */
-.rfa-admin-shell {
+.rfa-admin-shell,
+.rfa-enterprise-panel-shell {
+    width: 100%;
+    min-height: 100vh;
+    box-sizing: border-box;
     background: #071a3a !important;
 }
 
@@ -1156,13 +1160,15 @@ h6 {
     --enterprise-green: #69c79a;
     --enterprise-text: #f3f6fb;
     --enterprise-muted: #b9c7d8;
-    min-height: 100vh;
     width: 100%;
-    padding: clamp(7.5rem, 12vw, 10rem) 1.5rem 5rem;
+    min-height: 100vh;
+    margin: 0;
+    padding: 0;
+    overflow-x: hidden;
+    isolation: isolate;
     color: var(--enterprise-text);
     background:
-        radial-gradient(ellipse at 82% 5%, rgba(28, 68, 117, 0.3), transparent 36rem),
-        linear-gradient(180deg, #071a35 0%, #0a2040 40%, #071a35 100%);
+        linear-gradient(180deg, #071a3a 0%, #0a2042 52%, #071a3a 100%);
 }
 
 .rfa-enterprise,
@@ -1322,13 +1328,14 @@ h6 {
 }
 
 /* Home image sections own their backgrounds; FAQ and footer intentionally share image 09. */
-.rfa-landing .rfa-home-image-section {
+:is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section {
     background-repeat: no-repeat;
     background-size: cover;
     background-position: center;
 }
 
-.rfa-landing .rfa-landing-hero {
+.rfa-landing .rfa-landing-hero,
+.rfa-enterprise .rfa-home-image-section-01 {
     background-color: #06152f;
     background-image:
         linear-gradient(180deg, transparent calc(100% - 36px), #081a36 100%),
@@ -1337,10 +1344,10 @@ h6 {
     background-position: center;
 }
 
-.rfa-landing .rfa-home-image-section-02,
-.rfa-landing .rfa-home-image-section-03,
-.rfa-landing .rfa-home-image-section-04,
-.rfa-landing .rfa-home-image-section-05 {
+:is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-02,
+:is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-03,
+:is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-04,
+:is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-05 {
     background-color: #081a36;
     background-image:
         linear-gradient(180deg, #081a36 0, transparent 36px),
@@ -1349,30 +1356,30 @@ h6 {
         var(--rfa-home-image) !important;
 }
 
-.rfa-landing .rfa-home-image-section-02 {
+:is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-02 {
     padding-block: 88px;
     background-position: 50% 45%;
 }
 
-.rfa-landing .rfa-home-image-section-03 {
+:is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-03 {
     padding-block: 104px;
     background-position: 50% 52%;
 }
 
-.rfa-landing .rfa-home-image-section-04 {
+:is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-04 {
     padding-block: 88px;
     background-position: 50% 48%;
 }
 
-.rfa-landing .rfa-home-image-section-05 {
+:is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-05 {
     padding-block: 88px;
     background-position: 50% 56%;
 }
 
 /* Home scenes 06-08 keep their own image and let content determine section height. */
-.rfa-landing .rfa-home-image-section-06,
-.rfa-landing .rfa-home-image-section-07,
-.rfa-landing .rfa-home-image-section-08 {
+:is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-06,
+:is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-07,
+:is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-08 {
     background-color: #081a36;
     background-repeat: no-repeat;
     background-size: cover;
@@ -1383,16 +1390,16 @@ h6 {
         var(--rfa-home-image);
 }
 
-.rfa-landing .rfa-home-image-section-06 {
+:is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-06 {
     background-position: 50% 48%;
     padding-bottom: 3.25rem;
 }
 
-.rfa-landing .rfa-home-image-section-07 {
+:is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-07 {
     background-position: 50% 52%;
 }
 
-.rfa-landing .rfa-home-image-section-08 {
+:is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-08 {
     background-position: 50% 48%;
 }
 
@@ -1465,10 +1472,10 @@ h6 {
 }
 
 @media (max-width: 767px) {
-    .rfa-landing .rfa-home-image-section-02,
-    .rfa-landing .rfa-home-image-section-03,
-    .rfa-landing .rfa-home-image-section-04,
-    .rfa-landing .rfa-home-image-section-05 {
+    :is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-02,
+    :is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-03,
+    :is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-04,
+    :is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-05 {
         display: block;
         min-height: auto;
         padding-block: 56px;
@@ -1487,25 +1494,33 @@ h6 {
         background-position: 66% center;
     }
 
-    .rfa-landing .rfa-home-image-section-02 {
+    .rfa-enterprise .rfa-home-image-section-01 {
+        background-image:
+            linear-gradient(180deg, transparent calc(100% - 32px), #081a36 100%),
+            linear-gradient(180deg, rgba(4, 17, 39, 0.68) 0%, rgba(4, 17, 39, 0.7) 58%, rgba(4, 17, 39, 0.72) 100%),
+            var(--rfa-home-image);
+        background-position: 66% center;
+    }
+
+    :is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-02 {
         background-position: 58% center;
     }
 
-    .rfa-landing .rfa-home-image-section-03 {
+    :is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-03 {
         background-position: 52% center;
     }
 
-    .rfa-landing .rfa-home-image-section-04 {
+    :is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-04 {
         background-position: 50% center;
     }
 
-    .rfa-landing .rfa-home-image-section-05 {
+    :is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-05 {
         background-position: 62% center;
     }
 
-    .rfa-landing .rfa-home-image-section-06,
-    .rfa-landing .rfa-home-image-section-07,
-    .rfa-landing .rfa-home-image-section-08 {
+    :is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-06,
+    :is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-07,
+    :is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-08 {
         background-image:
             linear-gradient(180deg, #081a36 0, transparent 24px),
             linear-gradient(0deg, #081a36 0, transparent 24px),
@@ -1513,15 +1528,15 @@ h6 {
             var(--rfa-home-image);
     }
 
-    .rfa-landing .rfa-home-image-section-06 {
+    :is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-06 {
         background-position: 48% center;
     }
 
-    .rfa-landing .rfa-home-image-section-07 {
+    :is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-07 {
         background-position: 50% center;
     }
 
-    .rfa-landing .rfa-home-image-section-08 {
+    :is(.rfa-landing, .rfa-enterprise) .rfa-home-image-section-08 {
         background-position: 48% center;
     }
 
@@ -1536,19 +1551,15 @@ h6 {
     }
 }
 
-.rfa-enterprise__inner {
-    width: min(100%, 1160px);
-    margin: 0 auto;
-    display: grid;
-    gap: clamp(4.5rem, 9vw, 7.5rem);
+.rfa-enterprise__container {
+    width: min(100%, 72rem);
+    margin-inline: auto;
+    padding: 0;
 }
 
 .rfa-enterprise__hero {
-    display: grid;
-    grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
-    align-items: center;
-    gap: clamp(2rem, 6vw, 5rem);
-    min-height: 480px;
+    width: 100%;
+    min-height: 0;
 }
 
 .rfa-enterprise__hero-copy,
@@ -1649,6 +1660,8 @@ h6 {
 }
 
 .rfa-enterprise__emblem {
+    position: relative;
+    z-index: 1;
     display: block;
     width: min(100%, 370px);
     aspect-ratio: 1;
@@ -1678,15 +1691,13 @@ h6 {
 }
 
 .rfa-enterprise__section {
-    position: relative;
+    width: 100%;
     min-width: 0;
-    padding: clamp(1.5rem, 4vw, 3.2rem) 0;
-    border-top: 1px solid rgba(226, 235, 245, 0.09);
 }
 
 .rfa-enterprise__section-heading {
     max-width: 780px;
-    margin-bottom: 1.8rem;
+    margin-bottom: 1.2rem;
 }
 
 .rfa-enterprise__section-heading h2,
@@ -1793,14 +1804,14 @@ h6 {
 }
 
 .rfa-enterprise__visibility {
+    width: 100%;
+}
+
+.rfa-enterprise__visibility-inner {
     display: grid;
-    grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+    grid-template-columns: minmax(0, 1.05fr) minmax(360px, 0.95fr);
     align-items: center;
-    gap: 2rem;
-    padding: clamp(2rem, 5vw, 3.5rem);
-    border: 1px solid rgba(209, 226, 245, 0.11);
-    border-radius: 1.25rem;
-    background: linear-gradient(115deg, rgba(14, 39, 73, 0.78), rgba(8, 28, 55, 0.6));
+    gap: clamp(2rem, 4vw, 3.5rem);
 }
 
 .rfa-enterprise__visibility .rfa-enterprise__section-heading {
@@ -1939,7 +1950,7 @@ h6 {
 }
 
 .rfa-enterprise__audience-list {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.1rem 1.5rem;
 }
 
@@ -1953,19 +1964,19 @@ h6 {
     top: 1.15rem;
 }
 
+.rfa-enterprise__audience-section {
+    width: 100%;
+}
+
 .rfa-enterprise__proposal {
+    width: 100%;
+}
+
+.rfa-enterprise__proposal-inner {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 2rem;
-    padding: clamp(1.6rem, 4vw, 2.6rem);
-    border: 1px solid rgba(115, 170, 216, 0.17);
-    border-radius: 1.2rem;
-    background: linear-gradient(110deg, rgba(12, 36, 68, 0.88), rgba(9, 29, 57, 0.7));
-}
-
-.rfa-enterprise__proposal > div {
-    max-width: 760px;
 }
 
 .rfa-enterprise__proposal-close {
@@ -2003,21 +2014,19 @@ h6 {
 }
 
 .rfa-enterprise__form-section {
+    width: 100%;
     scroll-margin-top: 7rem;
+}
+
+.rfa-enterprise__form-inner {
     display: grid;
-    grid-template-columns: minmax(0, 0.78fr) minmax(0, 1.22fr);
-    gap: clamp(2rem, 6vw, 5rem);
+    grid-template-columns: minmax(0, 0.68fr) minmax(0, 1.32fr);
+    gap: clamp(1.75rem, 4vw, 3.25rem);
     align-items: start;
-    padding: clamp(1.4rem, 4vw, 3rem);
-    border: 1px solid rgba(210, 226, 244, 0.13);
-    border-radius: 1.25rem;
-    background: rgba(6, 22, 45, 0.88);
-    box-shadow: 0 24px 70px rgba(0, 8, 23, 0.2);
 }
 
 .rfa-enterprise__form-intro {
-    position: sticky;
-    top: 7rem;
+    position: static;
 }
 
 .rfa-enterprise__form-intro h2 {
@@ -2197,30 +2206,9 @@ h6 {
         row-gap: 1.7rem;
     }
 
-    .rfa-enterprise__form-section {
-        grid-template-columns: minmax(0, 1fr);
-    }
-
-    .rfa-enterprise__form-intro {
-        position: static;
-    }
 }
 
 @media (max-width: 700px) {
-    .rfa-enterprise {
-        padding: 7.25rem 1.1rem 3rem;
-    }
-
-    .rfa-enterprise__inner {
-        gap: 4rem;
-    }
-
-    .rfa-enterprise__hero {
-        grid-template-columns: minmax(0, 1fr);
-        gap: 1rem;
-        min-height: 0;
-    }
-
     .rfa-enterprise__hero h1 {
         font-size: clamp(2.25rem, 10vw, 3.45rem);
     }
@@ -2247,21 +2235,25 @@ h6 {
         gap: 1.5rem 1rem;
     }
 
-    .rfa-enterprise__visibility {
+    .rfa-enterprise__visibility-inner {
         grid-template-columns: minmax(0, 1fr);
-        gap: 1.3rem;
-        padding: 1.4rem;
+        gap: 1.25rem;
+    }
+
+    .rfa-enterprise__proposal-inner {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
+    .rfa-enterprise__form-inner {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 1.4rem;
     }
 
     .rfa-enterprise__visibility-note {
         grid-column: auto;
         margin-top: -0.65rem;
-    }
-
-    .rfa-enterprise__proposal {
-        align-items: flex-start;
-        flex-direction: column;
-        gap: 0.25rem;
     }
 
     .rfa-enterprise__button--secondary {
@@ -2274,11 +2266,6 @@ h6 {
 }
 
 @media (max-width: 480px) {
-    .rfa-enterprise {
-        padding-right: 1rem;
-        padding-left: 1rem;
-    }
-
     .rfa-enterprise__issue-list,
     .rfa-enterprise__audience-list,
     .rfa-enterprise__workflow,
@@ -2290,10 +2277,6 @@ h6 {
     .rfa-enterprise__services,
     .rfa-enterprise__field--wide {
         grid-column: auto;
-    }
-
-    .rfa-enterprise__form-section {
-        padding: 1.15rem;
     }
 
     .rfa-enterprise__signal-panel span {

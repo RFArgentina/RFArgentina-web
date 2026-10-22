@@ -1,34 +1,25 @@
 import { getToken, setToken } from "./auth";
 
-const BACKEND_FALLBACK_URL = "https://rfa-backend-1.onrender.com";
-
 function resolveApiBase() {
-  const envBase = process.env.REACT_APP_BACKEND_URL;
-  if (envBase) return `${envBase}/api`;
-  if (typeof window !== "undefined") {
-    const host = String(window.location.hostname || "").toLowerCase();
-    const isLocal = host === "localhost" || host === "127.0.0.1";
-    if (!isLocal) return `${BACKEND_FALLBACK_URL}/api`;
-  }
-  return "/api";
+  const envBase = String(process.env.REACT_APP_BACKEND_URL || "").trim().replace(/\/+$/, "");
+  return envBase ? `${envBase}/api` : "/api";
 }
 
 const API_BASE = resolveApiBase();
-const CSRF_COOKIE = process.env.REACT_APP_CSRF_COOKIE_NAME || "rfa_csrf_token";
 let refreshPromise = null;
 
-function getCookieValue(name) {
-  if (typeof document === "undefined") return "";
-  const source = `; ${document.cookie || ""}`;
-  const parts = source.split(`; ${name}=`);
-  if (parts.length < 2) return "";
-  return decodeURIComponent(parts.pop().split(";").shift() || "");
+async function getCsrfToken(signal) {
+  const response = await fetch(`${API_BASE}/auth/csrf`, { credentials: "include", signal });
+  if (!response.ok) return "";
+  const data = await response.json();
+  return data?.csrf_token || "";
 }
 
 async function refreshAccessToken(signal) {
   if (!refreshPromise) {
     refreshPromise = (async () => {
-      const csrfToken = getCookieValue(CSRF_COOKIE);
+      const csrfToken = await getCsrfToken(signal);
+      if (!csrfToken) return false;
       const response = await fetch(`${API_BASE}/auth/refresh`, {
         method: "POST",
         headers: {
@@ -61,9 +52,10 @@ export async function apiRequest(path, options = {}) {
   };
   if (token) headers.Authorization = `Bearer ${token}`;
   if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
-    const csrfToken = getCookieValue(CSRF_COOKIE);
-    if (csrfToken && !headers["X-CSRF-Token"]) {
-      headers["X-CSRF-Token"] = csrfToken;
+    // Only cookie-authenticated refresh/logout require CSRF; the API reads it from its own origin.
+    if (path === "/auth/logout" && !headers["X-CSRF-Token"]) {
+      const csrfToken = await getCsrfToken(requestOptions.signal);
+      if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
     }
   }
 
@@ -113,4 +105,29 @@ export async function apiRequest(path, options = {}) {
 
   // Prefer JSON, but allow non-JSON successful responses (rare).
   return data ?? (text || null);
+}
+
+export async function apiDownload(path, options = {}) {
+  const fetchOptions = { ...options };
+  delete fetchOptions.skipAuthRefresh;
+  const token = getToken();
+  const headers = { ...(fetchOptions.headers || {}) };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...fetchOptions,
+    headers,
+    credentials: "include"
+  });
+  if (!response.ok) {
+    const contentType = response.headers.get("content-type") || "";
+    let message = "No se pudo descargar el archivo";
+    if (contentType.includes("application/json")) {
+      const data = await response.json().catch(() => null);
+      if (data?.error) message = data.error;
+    }
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  return response.blob();
 }
