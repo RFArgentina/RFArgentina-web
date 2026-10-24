@@ -41,8 +41,8 @@ export default function CaseLookup() {
 
   const BANK_TRANSFER = {
     titular: "Matias Hernan Masdeu",
-    banco: "Banco Supervielle",
-    cbu: "0270053320052964280015",
+    banco: "Banco Provincia",
+    cbu: "0140032803503356580806",
     alias: "MATIASHERNAN.M",
     referencia: "Indicá tu email y el ID del caso en el comprobante"
   };

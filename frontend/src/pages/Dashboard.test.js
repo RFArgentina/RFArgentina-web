@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import Dashboard from "./Dashboard";
 import { apiRequest } from "@/lib/api";
@@ -51,6 +51,19 @@ async function openCase(caseItem) {
   }
   fireEvent.click(screen.getByRole("button", { name: /Abrir/ }));
   await screen.findByText("Volver a casos");
+}
+
+async function renderAdminCases(caseItems) {
+  localStorage.setItem("rfa_token", "test-token");
+  apiRequest.mockImplementation(async (url) => {
+    if (url === "/me") return { id: "admin-1", email: "admin@example.test", role: "admin" };
+    if (url === "/cases") return caseItems;
+    if (url === "/enterprise" || url === "/enterprise-users") return [];
+    throw new Error("Unexpected request: " + url);
+  });
+
+  render(<MemoryRouter initialEntries={["/panel"]}><Dashboard /></MemoryRouter>);
+  await screen.findByText(caseItems[0].case_code);
 }
 
 describe("admin Dashboard case flow controls", () => {
@@ -276,5 +289,141 @@ describe("admin Dashboard case flow controls", () => {
 
     expect(await screen.findByText("Completá un precio válido, moneda y alcance para cada opción habilitada.")).toBeInTheDocument();
     expect(apiRequest).not.toHaveBeenCalledWith("/cases/" + item.id + "/service-offers", expect.anything());
+  });
+
+  test("enterprise access generator is visible only in the admin Empresas view", async () => {
+    await openCase(makeCase());
+
+    expect(screen.queryByRole("heading", { name: "Generar usuario empresa" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Empresas" }));
+    expect(await screen.findByRole("heading", { name: "Generar usuario empresa" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Personas" }));
+    expect(screen.queryByRole("heading", { name: "Generar usuario empresa" })).not.toBeInTheDocument();
+  });
+
+  test("admin can create an enterprise-only account and view its credentials once", async () => {
+    const item = makeCase();
+    apiRequest.mockImplementation(async (url, options = {}) => {
+      if (url === "/me") return { id: "admin-1", email: "admin@example.test", role: "admin" };
+      if (url === "/cases") return [item];
+      if (url === "/enterprise") return [];
+      if (url === "/enterprise-users" && options.method === "POST") {
+        return {
+          user: { id: "enterprise-2", email: "acme@example.test", role: "enterprise" },
+          generated_password: "StrongGenerated123"
+        };
+      }
+      if (url === "/enterprise-users") return [];
+      throw new Error("Unexpected request: " + url);
+    });
+    localStorage.setItem("rfa_token", "test-token");
+    render(<MemoryRouter initialEntries={["/panel"]}><Dashboard /></MemoryRouter>);
+    await screen.findByText(item.case_code);
+    fireEvent.click(screen.getByRole("button", { name: "Empresas" }));
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Email del usuario empresa" }), {
+      target: { value: "acme@example.test" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generar usuario empresa" }));
+
+    expect(await screen.findByText("StrongGenerated123")).toBeInTheDocument();
+    expect(apiRequest).toHaveBeenCalledWith("/enterprise-users", {
+      method: "POST",
+      body: JSON.stringify({ email: "acme@example.test", password: undefined })
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Personas" }));
+    expect(screen.queryByText("StrongGenerated123")).not.toBeInTheDocument();
+  });
+
+  test("existing enterprise access is shown and duplicate creation is disabled", async () => {
+    const item = makeCase();
+    apiRequest.mockImplementation(async (url) => {
+      if (url === "/me") return { id: "admin-1", email: "admin@example.test", role: "admin" };
+      if (url === "/cases") return [item];
+      if (url === "/enterprise") return [];
+      if (url === "/enterprise-users") return [{ id: "enterprise-1", email: "acme@example.test" }];
+      throw new Error("Unexpected request: " + url);
+    });
+    localStorage.setItem("rfa_token", "test-token");
+    render(<MemoryRouter initialEntries={["/panel"]}><Dashboard /></MemoryRouter>);
+    await screen.findByText(item.case_code);
+    fireEvent.click(screen.getByRole("button", { name: "Empresas" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Email del usuario empresa" }), {
+      target: { value: "ACME@example.test" }
+    });
+
+    expect(screen.getByText(/Ya existe un acceso de empresa para acme@example.test/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Generar usuario empresa" })).toBeDisabled();
+  });
+
+  test("summary indicators use the selected complete case context and preserve their predicates", async () => {
+    const items = [
+      makeCase({ id: "p-active", case_code: "RFA-P001", documentacion_estado: "completa" }),
+      makeCase({
+        id: "p-attention",
+        case_code: "RFA-P002",
+        service_code: "rfa-management",
+        plan_elegido: "rfa-management",
+        prioridad: "Alta",
+        documentacion_estado: "parcial"
+      }),
+      makeCase({
+        id: "p-closed",
+        case_code: "RFA-P003",
+        estado: "completed",
+        service_code: "rfa-management",
+        plan_elegido: "rfa-management",
+        documentacion_estado: "completa"
+      }),
+      makeCase({
+        id: "e-active",
+        case_code: "RFA-E001",
+        enterprise_user_id: "enterprise-1",
+        documentacion_estado: "completa"
+      }),
+      makeCase({
+        id: "e-attention",
+        case_code: "RFA-E002",
+        enterprise_user_id: "enterprise-1",
+        riesgo: "Crítico",
+        documentacion_estado: "completa"
+      }),
+      makeCase({
+        id: "e-closed",
+        case_code: "RFA-E003",
+        enterprise_user_id: "enterprise-1",
+        estado: "completed",
+        documentacion_estado: "parcial"
+      })
+    ];
+    await renderAdminCases(items);
+
+    const count = (label) => {
+      const labelNode = screen.getByText(label);
+      return within(labelNode.closest("button")).getByText(/^\d+$/).textContent;
+    };
+    const view = (label) => within(screen.getByRole("navigation", { name: "Vistas de casos" }))
+      .getByRole("button", { name: label });
+
+    expect([count("Activos"), count(/Requieren atenci/), count(/Documentaci/), count("Cerrados"), count("Nuevos")])
+      .toEqual(["4", "2", "2", "2", "1"]);
+
+    fireEvent.click(view("Personas"));
+    expect([count("Activos"), count(/Requieren atenci/), count(/Documentaci/), count("Cerrados"), count("Nuevos")])
+      .toEqual(["2", "1", "1", "1", "1"]);
+
+    fireEvent.click(view("Empresas"));
+    expect([count("Activos"), count(/Requieren atenci/), count(/Documentaci/), count("Cerrados"), count("Nuevos")])
+      .toEqual(["2", "1", "1", "1", "0"]);
+
+    fireEvent.click(view(/Atenci/));
+    expect([count("Activos"), count(/Requieren atenci/), count(/Documentaci/), count("Cerrados"), count("Nuevos")])
+      .toEqual(["2", "2", "1", "0", "0"]);
+
+    fireEvent.click(view("Cerrados"));
+    expect([count("Activos"), count(/Requieren atenci/), count(/Documentaci/), count("Cerrados"), count("Nuevos")])
+      .toEqual(["0", "0", "1", "2", "0"]);
   });
 });

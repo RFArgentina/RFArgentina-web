@@ -326,9 +326,25 @@ test("conversation API enforces scope, immutable history, attention and private 
   const enterprise = await request(baseUrl, "/enterprise-users", {
     token: adminToken,
     method: "POST",
-    body: { email: "enterprise-conversations@test.local", password: "EnterprisePass123" }
+    body: { email: "enterprise-conversations@test.local" }
   });
   assert.equal(enterprise.response.status, 201);
+  assert.equal(enterprise.data.user.role, "enterprise");
+  assert.equal(typeof enterprise.data.generated_password, "string");
+  assert.ok(enterprise.data.generated_password.length >= 8);
+  const duplicateEnterprise = await request(baseUrl, "/enterprise-users", {
+    token: adminToken,
+    method: "POST",
+    body: { email: "enterprise-conversations@test.local", password: "AnotherPass123" }
+  });
+  assert.equal(duplicateEnterprise.response.status, 409, "an existing enterprise email cannot create a duplicate account");
+  const attemptedAdminCreation = await request(baseUrl, "/enterprise-users", {
+    token: adminToken,
+    method: "POST",
+    body: { email: "role-attempt@test.local", password: "EnterprisePass123", role: "admin" }
+  });
+  assert.equal(attemptedAdminCreation.response.status, 201);
+  assert.equal(attemptedAdminCreation.data.user.role, "enterprise", "the endpoint must not accept role promotion from its payload");
   const csv = new Blob(["email,nombre_completo,entidad,tipo_reclamo,descripcion\ncontacto@test.local,Cliente Empresa,Proveedor,Consulta,Prueba de caso empresa\n"], { type: "text/csv" });
   const importForm = new FormData();
   importForm.append("enterprise_user_id", enterprise.data.user.id);
@@ -336,9 +352,24 @@ test("conversation API enforces scope, immutable history, attention and private 
   const imported = await request(baseUrl, "/cases/import", { token: adminToken, method: "POST", body: importForm });
   assert.equal(imported.response.status, 201, JSON.stringify(imported.data));
   assert.equal(imported.data.imported, 1);
+  const otherEnterprise = await request(baseUrl, "/enterprise-users", {
+    token: adminToken,
+    method: "POST",
+    body: { email: "other-enterprise@test.local", password: "EnterprisePass123" }
+  });
+  assert.equal(otherEnterprise.response.status, 201);
+  const otherCsv = new Blob(["email,nombre_completo,entidad,tipo_reclamo,descripcion\notro-contacto@test.local,Otro Cliente,Otro Proveedor,Consulta,Otro caso empresa\n"], { type: "text/csv" });
+  const otherImportForm = new FormData();
+  otherImportForm.append("enterprise_user_id", otherEnterprise.data.user.id);
+  otherImportForm.append("files", otherCsv, "other-enterprise.csv");
+  const otherImported = await request(baseUrl, "/cases/import", { token: adminToken, method: "POST", body: otherImportForm });
+  assert.equal(otherImported.response.status, 201, JSON.stringify(otherImported.data));
+  assert.equal(otherImported.data.imported, 1);
   cases = await request(baseUrl, "/cases", { token: adminToken });
   const enterpriseCase = cases.data.find((item) => item.enterprise_user_id === enterprise.data.user.id);
+  const otherEnterpriseCase = cases.data.find((item) => item.enterprise_user_id === otherEnterprise.data.user.id);
   assert.ok(enterpriseCase);
+  assert.ok(otherEnterpriseCase);
   const enterprisePublicLookup = await request(baseUrl, "/public/case-lookup", {
     method: "POST", body: { identifier: "contacto@test.local", case_id: enterpriseCase.case_code }
   });
@@ -346,9 +377,24 @@ test("conversation API enforces scope, immutable history, attention and private 
   const enterpriseConversation = await request(baseUrl, `/cases/${enterpriseCase.id}/conversations`, { token: adminToken });
   assert.equal(enterpriseConversation.response.status, 404);
   const enterpriseLogin = await request(baseUrl, "/auth/login", {
-    method: "POST", body: { email: "enterprise-conversations@test.local", password: "EnterprisePass123" }
+    method: "POST", body: { email: "enterprise-conversations@test.local", password: enterprise.data.generated_password }
   });
   assert.equal(enterpriseLogin.response.status, 200);
+  assert.equal(enterpriseLogin.data.user.role, "enterprise");
+  const enterpriseCases = await request(baseUrl, "/cases", { token: enterpriseLogin.data.token });
+  assert.deepEqual(enterpriseCases.data.map((item) => item.id), [enterpriseCase.id], "enterprise accounts see only their assigned cases");
+  const otherEnterpriseLogin = await request(baseUrl, "/auth/login", {
+    method: "POST", body: { email: "other-enterprise@test.local", password: "EnterprisePass123" }
+  });
+  assert.equal(otherEnterpriseLogin.response.status, 200);
+  const otherEnterpriseCases = await request(baseUrl, "/cases", { token: otherEnterpriseLogin.data.token });
+  assert.deepEqual(otherEnterpriseCases.data.map((item) => item.id), [otherEnterpriseCase.id], "a different enterprise cannot see the first enterprise's case");
+  const enterpriseCannotCreateAnotherAccount = await request(baseUrl, "/enterprise-users", {
+    token: enterpriseLogin.data.token,
+    method: "POST",
+    body: { email: "blocked-create@test.local", password: "EnterprisePass123" }
+  });
+  assert.equal(enterpriseCannotCreateAnotherAccount.response.status, 403);
   const enterpriseCannotUseAdminConversation = await request(baseUrl, `/cases/${first.id}/conversations`, { token: enterpriseLogin.data.token });
   assert.equal(enterpriseCannotUseAdminConversation.response.status, 403);
 

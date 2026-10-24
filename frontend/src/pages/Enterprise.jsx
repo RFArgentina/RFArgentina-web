@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { apiRequest } from "@/lib/api";
@@ -25,15 +25,30 @@ const workflow = [
   { title: "Estructuración", text: "Ordenamos información, antecedentes y documentación." },
   { title: "Clasificación", text: "Organizamos el estado y la prioridad para facilitar su consulta." },
   { title: "Seguimiento", text: "Mantenemos organizada la evolución documental y administrativa." },
-  { title: "Reporte", text: "Tu equipo puede consultar el estado y la información disponible de cada caso." }
+  { title: "Control", text: "Tu equipo consulta el estado, las prioridades y la información disponible de cada caso." }
 ];
 
 const audience = [
   "Empresas con crecimiento sostenido de reclamos",
   "Equipos de atención con alto volumen operativo",
   "Plataformas o servicios con múltiples casos simultáneos",
-  "Organizaciones que necesitan trazabilidad documental",
-  "Equipos que preparan revisiones o reportes internos"
+  "Equipos que necesitan información ordenada para seguimiento, revisión o reporte interno.",
+  "Equipos que necesitan centralizar casos hoy dispersos entre áreas, correos o planillas."
+];
+
+const panelScreenshots = [
+  {
+    title: "Vista general",
+    description: "Organizá y priorizá todos los casos desde un único panel.",
+    src: "/images/panel-empresa-general.png",
+    alt: "Captura de la vista general del Panel Empresa de RFA"
+  },
+  {
+    title: "Detalle del caso",
+    description: "Consultá información, documentación, observaciones e historial de cada gestión.",
+    src: "/images/panel-empresa-detalle.png",
+    alt: "Captura del detalle de un caso en el Panel Empresa de RFA"
+  }
 ];
 
 export default function Enterprise() {
@@ -50,6 +65,36 @@ export default function Enterprise() {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
+  const [activeScreenshot, setActiveScreenshot] = useState(null);
+  const lightboxCloseRef = useRef(null);
+  const isLightboxOpen = activeScreenshot !== null;
+
+  useEffect(() => {
+    if (!isLightboxOpen) return undefined;
+
+    const previousFocus = document.activeElement;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setActiveScreenshot(null);
+      if (event.key === "ArrowLeft") {
+        setActiveScreenshot((index) => (index + panelScreenshots.length - 1) % panelScreenshots.length);
+      }
+      if (event.key === "ArrowRight") {
+        setActiveScreenshot((index) => (index + 1) % panelScreenshots.length);
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    lightboxCloseRef.current?.focus();
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      previousFocus?.focus?.();
+    };
+  }, [isLightboxOpen]);
 
   const toggleSelection = (value, list, setter) => {
     if (list.includes(value)) {
@@ -183,27 +228,71 @@ export default function Enterprise() {
               <li>Seguimiento y trazabilidad</li>
             </ul>
           </div>
-          <div className="rfa-enterprise__panel-preview" aria-label="Mockup ilustrativo preparado para reemplazar por una captura real del panel">
-            <div className="rfa-enterprise__preview-topbar">
-              <span className="rfa-enterprise__preview-dots" aria-hidden="true"><i /><i /><i /></span>
-              <span>Panel de empresas</span>
-              <span className="rfa-enterprise__preview-private">Acceso privado</span>
-            </div>
-            <div className="rfa-enterprise__preview-content">
-              <div className="rfa-enterprise__preview-heading"><span>Caso</span><span>Estado</span><span>Prioridad</span></div>
-              {[0, 1, 2].map((row) => (
-                <div className="rfa-enterprise__preview-row" key={row} aria-hidden="true">
-                  <span className="rfa-enterprise__preview-case" />
-                  <span className="rfa-enterprise__preview-status" />
-                  <span className="rfa-enterprise__preview-priority" />
-                </div>
-              ))}
-            </div>
-            <p className="rfa-enterprise__preview-caption">Vista ilustrativa · espacio para captura real</p>
+          <div className="rfa-enterprise__screenshots">
+            {panelScreenshots.map((screenshot, index) => (
+              <article className="rfa-enterprise__screenshot-card" key={screenshot.src}>
+                <h3>{screenshot.title}</h3>
+                <p>{screenshot.description}</p>
+                <button
+                  className="rfa-enterprise__screenshot-trigger"
+                  type="button"
+                  onClick={() => setActiveScreenshot(index)}
+                  aria-label={`Ampliar captura: ${screenshot.title}`}
+                >
+                  <img src={screenshot.src} alt={screenshot.alt} loading="lazy" />
+                </button>
+              </article>
+            ))}
+            <p className="rfa-enterprise__screenshots-caption">
+              Vista ilustrativa del Panel Empresa con datos ficticios.
+            </p>
           </div>
           <p className="rfa-enterprise__visibility-note">Panel privado para consulta, clasificación y seguimiento de los casos derivados.</p>
         </div>
       </section>
+
+      {activeScreenshot !== null && (
+        <div
+          className="rfa-enterprise__lightbox"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setActiveScreenshot(null);
+          }}
+        >
+          <div className="rfa-enterprise__lightbox-dialog" role="dialog" aria-modal="true" aria-label={panelScreenshots[activeScreenshot].title}>
+            <div className="rfa-enterprise__lightbox-toolbar">
+              <p>{panelScreenshots[activeScreenshot].title}</p>
+              <button
+                ref={lightboxCloseRef}
+                className="rfa-enterprise__lightbox-close"
+                type="button"
+                onClick={() => setActiveScreenshot(null)}
+                aria-label="Cerrar visor"
+              >
+                {"\u00D7"}
+              </button>
+            </div>
+            <div className="rfa-enterprise__lightbox-viewer">
+              <button
+                className="rfa-enterprise__lightbox-nav rfa-enterprise__lightbox-nav--previous"
+                type="button"
+                onClick={() => setActiveScreenshot((activeScreenshot + panelScreenshots.length - 1) % panelScreenshots.length)}
+                aria-label="Ver captura anterior"
+              >
+                {"\u2039"}
+              </button>
+              <img src={panelScreenshots[activeScreenshot].src} alt={panelScreenshots[activeScreenshot].alt} />
+              <button
+                className="rfa-enterprise__lightbox-nav rfa-enterprise__lightbox-nav--next"
+                type="button"
+                onClick={() => setActiveScreenshot((activeScreenshot + 1) % panelScreenshots.length)}
+                aria-label="Ver captura siguiente"
+              >
+                {"\u203A"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <section
         className="rfa-enterprise__section rfa-enterprise__audience-section rfa-home-image-section rfa-home-image-section-05 py-20 px-6 bg-white/5 backdrop-blur-sm"
@@ -230,7 +319,7 @@ export default function Enterprise() {
           <div>
             <p className="rfa-enterprise__kicker">Alcance a medida</p>
             <h2 id="enterprise-proposal-title">Una propuesta adaptada a la operación</h2>
-            <p>No trabajamos con un paquete único para empresas. La propuesta se define según el volumen de casos, el tipo de trabajo requerido y la modalidad de seguimiento.</p>
+            <p>Cada operación requiere un alcance distinto. La propuesta se define según el volumen de casos, el tipo de trabajo requerido y la modalidad de seguimiento.</p>
             <p className="rfa-enterprise__proposal-close">Una operación con más reclamos no debería significar más desorden. Centralizá la información, identificá prioridades y mantené trazabilidad sobre cada caso.</p>
             <div className="rfa-enterprise__contact" aria-label="Contacto y acceso para empresas">
               <a href="mailto:soporte@rfargentina.com">soporte@rfargentina.com</a>

@@ -3,13 +3,11 @@ import { useNavigate } from "react-router-dom";
 import { getToken } from "@/lib/auth";
 import { analysisService, plans } from "@/data/plans";
 import { Button } from './ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { FaInstagram, FaFacebook, FaLinkedin } from "react-icons/fa";
 import {
   CheckCircle,
   FileText,
   Shield,
-  Gavel,
   ShoppingBag,
   PackageCheck,
   ShieldCheck,
@@ -38,61 +36,32 @@ const RFALanding = () => {
     {
       icon: <FileText className="w-10 h-10 text-emerald-300" />,
       title: 'Contás qué pasó',
-      description: 'Cargás tu caso y la documentación disponible, sin necesidad de registrarte.',
+      description: 'Completás el formulario y adjuntás lo que tengas.',
     },
     {
       icon: <Shield className="w-10 h-10 text-emerald-300" />,
       title: 'Revisamos el caso',
-      description: 'Analizamos la información inicial e identificamos qué documentación puede faltar.',
+      description: 'Analizamos el problema y la documentación.',
     },
     {
       icon: <CheckCircle className="w-10 h-10 text-emerald-300" />,
       title: 'Definimos el alcance',
-      description: 'Determinamos si RFA puede intervenir y qué modalidad se adapta mejor a la situación.',
+      description: 'Te indicamos si podemos ayudarte y cómo.',
     },
     {
       icon: <FileText className="w-10 h-10 text-emerald-300" />,
       title: 'Preparamos el reclamo',
-      description: 'Ordenamos los hechos, clasificamos la documentación y preparamos las comunicaciones.',
+      description: 'Ordenamos el caso y las comunicaciones.',
     },
     {
       icon: <Shield className="w-10 h-10 text-emerald-300" />,
       title: 'Acompañamos el seguimiento',
-      description: 'Si elegís una modalidad con gestión, acompañamos el seguimiento administrativo.',
+      description: 'Según la modalidad que hayas elegido.',
     },
   ];
 
 
- // ---- Servicios ----
-const services = [
-  {
-    title: 'Carpeta profesional',
-    description:
-      'Organizamos el caso y entregamos un expediente estructurado para que puedas continuar por tu cuenta o utilizarlo como base si posteriormente necesitás asistencia profesional.',
-    features: [
-    'Cronología de los hechos y descripción clara del problema',
-    'Documentación, evidencia y comunicaciones clasificadas',
-    'Pretensión del usuario y estado del reclamo',
-    'Normativa de referencia, cuando corresponda',
-    'Carpeta lista para presentar ante la empresa o proveedor',
-    ],
-  },
- {
-  title: 'Gestión RFA',
-  description:
-    'Además de organizar el caso, preparamos las comunicaciones y acompañamos el seguimiento administrativo por los canales correspondientes dentro del alcance contratado.',
-  features: [
-    'Todo el trabajo de organización documental',
-    'Preparación de comunicaciones y acompañamiento de la presentación',
-    'Seguimiento de respuestas por los canales habilitados',
-    'Organización de las respuestas y actualización del caso',
-  ],
-},
-
-];
-
-
-  // ---- Planes ----
+  // ---- Preguntas frecuentes ----
   const faqs = [
     {
       q: "¿Qué puede hacer RFA por mi reclamo?",
@@ -182,10 +151,7 @@ const services = [
               </h1>
 
               <p className="text-lg md:text-2xl text-slate-200 mb-8 leading-relaxed">
-                Organizamos la documentación, reconstruimos los hechos, preparamos el reclamo y acompañamos su seguimiento.
-              </p>
-              <p className="text-slate-300 mb-8">
-                RFA asiste en reclamos frente a entidades financieras, comercios, marketplaces y proveedores de productos o servicios.
+                Ordenamos tu caso, preparamos el reclamo y acompañamos su seguimiento.
               </p>
               <div className="rfa-hero-badges flex flex-wrap gap-3 mb-8">
                 {[
@@ -226,21 +192,14 @@ const services = [
                   <Shield className="w-5 h-5 text-emerald-300" />
                   <p className="text-lg font-semibold text-slate-100">Dos modalidades, un mismo objetivo</p>
                 </div>
-                <p className="text-slate-200 mb-4">
-                  Según tu necesidad, podés solicitar acompañamiento administrativo o una carpeta estructurada para presentar por tu cuenta.
-                </p>
-                <div className="grid gap-2">
-                  <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                    <p className="text-sm font-semibold text-slate-100">Gestión de reclamos ante entidades</p>
-                    <p className="text-xs text-slate-300 mt-1">
-                      Redacción, acompañamiento de la presentación y seguimiento ante la empresa o proveedor.
-                    </p>
+                <div className="grid gap-3">
+                  <div>
+                    <p className="font-semibold text-slate-100">Carpeta Profesional</p>
+                    <p className="text-slate-300">Tu caso ordenado y listo para presentar.</p>
                   </div>
-                  <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                    <p className="text-sm font-semibold text-slate-100">Carpeta profesional</p>
-                    <p className="text-xs text-slate-300 mt-1">
-                      Documentación ordenada y reclamo redactado para que lo presentes por tu cuenta.
-                    </p>
+                  <div>
+                    <p className="font-semibold text-slate-100">Gestión RFA</p>
+                    <p className="text-slate-300">Preparamos las comunicaciones y acompañamos el seguimiento.</p>
                   </div>
                 </div>
               </div>
@@ -257,10 +216,8 @@ const services = [
             <h2 className="text-2xl md:text-3xl font-bold text-slate-100 mb-4">
               Qué problemas podemos gestionar
             </h2>
-            <p className="text-slate-300 mb-6">
-              Trabajamos con reclamos financieros y con problemas cotidianos de consumo, entre ellos:
-            </p>
-            <div className="rfa-issues-grid grid sm:grid-cols-2 gap-x-8 gap-y-2 text-slate-200 text-sm">
+            <p className="text-slate-300 mb-6">Reclamos financieros y problemas cotidianos de consumo.</p>
+            <div className="rfa-issues-grid grid sm:grid-cols-2 gap-x-8 gap-y-2 text-slate-200 text-base">
               {issueLists.map((group, groupIndex) => (
                 <ul className="rfa-issue-list" key={groupIndex}>
                   {group.map(([Icon, text]) => (
@@ -287,16 +244,13 @@ const services = [
             <div className="text-center mb-14">
               <p className="text-emerald-300 uppercase tracking-[0.3em] text-xs font-semibold mb-3">Proceso</p>
               <h2 className="text-3xl md:text-4xl font-bold text-slate-100">Cómo funciona</h2>
-              <p className="text-slate-300 mt-4 max-w-2xl mx-auto">
-                El análisis inicial permite determinar si RFA puede intervenir y qué servicio corresponde.
-              </p>
             </div>
             <div className="rfa-process-grid grid md:grid-cols-2 lg:grid-cols-5 gap-6">
               {steps.map((step, index) => (
                 <div key={index} className="rfa-process-step bg-white/5 border border-white/10 rounded-2xl p-6 backdrop-blur-sm">
                   <div className="rfa-process-icon mb-4">{step.icon}</div>
                   <h3 className="text-xl font-semibold text-slate-100 mb-2">{index + 1}. {step.title}</h3>
-                  <p className="text-slate-300 text-sm leading-relaxed">{step.description}</p>
+                  <p className="text-slate-300 text-base leading-relaxed">{step.description}</p>
                 </div>
               ))}
             </div>
@@ -311,91 +265,26 @@ const services = [
           <div className="max-w-6xl mx-auto bg-white/5 border border-white/10 rounded-2xl p-8">
             <h2 className="text-2xl md:text-3xl font-bold text-slate-100 mb-4">¿Podés reclamar por tu cuenta? Sí.</h2>
             <p className="text-slate-300 mb-4">
-              Es frecuente encontrarse con respuestas estandarizadas o gestiones que no avanzan. RFA aporta organización documental,
-              una cronología clara, precisión sobre lo solicitado y registro de las comunicaciones.
+              Y muchas veces alcanza. El problema aparece cuando las respuestas se estancan, la documentación se dispersa o no sabés cómo continuar.
             </p>
-            <ul className="space-y-2 text-slate-200 text-sm mb-4">
-              <li>• Ordenamos los hechos y la evidencia disponible.</li>
-              <li>• Identificamos información o documentación faltante.</li>
-              <li>• Preparamos una descripción clara del problema y de lo que solicitás.</li>
-              <li>• Incorporamos normativa de referencia, cuando corresponda.</li>
-            </ul>
-            <p className="text-slate-100 font-semibold">RFA no reemplaza tu voz. La organiza y la fortalece.</p>
+            <p className="text-slate-300 mb-4">
+              RFA ordena el caso, prepara el reclamo y registra cada avance.
+            </p>
+            <p className="text-slate-100 font-semibold">Tu reclamo sigue siendo tuyo. Nosotros le damos estructura.</p>
           </div>
         </section>
 
  
       {/* ================= QUIENES SOMOS ================= */}
-<section
-  className="rfa-home-image-section rfa-home-image-section-05 py-20 px-6 bg-white/5 backdrop-blur-sm"
-  style={{ "--rfa-home-image": "url('/images/rfa-home-05.png')" }}
->
-  <div className="container mx-auto max-w-4xl">
-    <div>
-      <h2 className="text-3xl md:text-4xl font-bold text-emerald-300 mb-6">
-        Quiénes somos
-      </h2>
-      <p className="text-lg text-slate-300 leading-relaxed mb-6">
-        RFA brinda asistencia documental y administrativa en reclamos financieros y de consumo.
-      </p>
-      <p className="text-lg text-slate-300 leading-relaxed mb-4">Nuestro enfoque se basa en:</p>
-      <ul className="space-y-3">
-        {[
-          "Precisión técnica",
-          "Análisis estructural del caso",
-          "Comunicación clara y documentada",
-          "Seguimiento documental y administrativo",
-        ].map((item, i) => (
-          <li key={i} className="flex items-center gap-3">
-            <CheckCircle className="w-5 h-5 text-emerald-300" />
-            {item}
-          </li>
-        ))}
-      </ul>
-      <p className="text-slate-100 font-semibold mt-6">No improvisamos reclamos. Los estructuramos.</p>
-    </div>
-  </div>
-</section>
-
-        {/* ================= SERVICIOS ================= */}
         <section
-          id="modalidades"
-          className="rfa-home-image-section rfa-home-image-section-06 py-20 px-6 bg-white/5 backdrop-blur-sm"
-          style={{ "--rfa-home-image": "url('/images/rfa-home-06.png')" }}
+          className="rfa-home-image-section rfa-home-image-section-05 py-12 px-6 bg-white/5 backdrop-blur-sm"
+          style={{ "--rfa-home-image": "url('/images/rfa-home-05.png')" }}
         >
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-emerald-300 mb-6">Dos modalidades de servicio</h2>
-            <p className="text-slate-300 max-w-3xl mx-auto">
-              Podés elegir una carpeta profesional para continuar por tu cuenta o una modalidad con acompañamiento administrativo. RFA puede gestionar las comunicaciones dentro del alcance acordado o preparar los mensajes para que el cliente los envíe desde sus propias cuentas o canales cuando corresponda.
+          <div className="max-w-4xl mx-auto">
+            <h2 className="text-3xl md:text-4xl font-bold text-emerald-300 mb-4">Qué es RFA</h2>
+            <p className="text-lg text-slate-300 leading-relaxed">
+              RFA es un servicio especializado en organización y gestión administrativa de reclamos financieros y de consumo. Analizamos cada caso individualmente y trabajamos con documentación, trazabilidad y un alcance definido desde el inicio.
             </p>
-          </div>
-          <div className="grid md:grid-cols-2 gap-8 max-w-6xl mx-auto">
-            {services.map((service, index) => (
-              <Card key={index} className={`rfa-service-card border transition ${index === 1 ? "rfa-service-card-featured" : ""}`}>
-                <CardHeader>
-                  <CardTitle className="rfa-service-card-title text-2xl mb-3">{service.title}</CardTitle>
-                  <CardDescription className="rfa-service-card-description text-lg">{service.description}</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <ul className="space-y-2">
-                    {service.features.map((f, i) => (
-                      <li key={i} className="flex items-center gap-3">
-                        <CheckCircle className="w-4 h-4 text-emerald-500" />
-                        <span className="rfa-service-feature">{f}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-          <div className="text-center mt-10">
-            <Button
-              onClick={handleCTAClick}
-                  className="rfa-home-cta bg-emerald-500 hover:bg-emerald-600 text-white font-semibold py-3 px-6 rounded-lg shadow-md transition"
-            >
-              Iniciar reclamo sin costo
-            </Button>
           </div>
         </section>
 
@@ -405,26 +294,19 @@ const services = [
           style={{ "--rfa-home-image": "url('/images/rfa-home-07.png')" }}
         >
           <div className="max-w-6xl mx-auto grid md:grid-cols-2 gap-6">
-            <div className="bg-white/5 border border-white/10 rounded-2xl p-8 h-full">
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-8 h-full">
               <h2 className="text-2xl md:text-3xl font-bold text-slate-100 mb-4">
-                Algunos casos requieren intervención profesional
+                ¿El caso requiere intervención profesional?
               </h2>
-              <p className="text-slate-300 mb-4">
-                Cuando la naturaleza o complejidad del caso requiere asesoramiento o una actuación reservada a profesionales,
-                RFA puede organizar la documentación para facilitar su continuidad.
+              <p className="text-slate-300">
+                Si por su naturaleza o complejidad el reclamo excede la gestión administrativa, podemos dejar la documentación organizada para facilitar su continuidad con el profesional correspondiente.
               </p>
-              <ul className="space-y-2 text-slate-200 text-sm">
-                <li className="flex items-start gap-2"><Gavel className="w-5 h-5 text-emerald-400 mt-0.5" />No prestamos patrocinio judicial ni servicios reservados a abogados.</li>
-                <li className="flex items-start gap-2"><Gavel className="w-5 h-5 text-emerald-400 mt-0.5" />No intervenimos en mediaciones oficiales.</li>
-                <li className="flex items-start gap-2"><Gavel className="w-5 h-5 text-emerald-400 mt-0.5" />No garantizamos resultados, devoluciones, indemnizaciones ni plazos.</li>
-              </ul>
             </div>
 
             <div className="bg-white/5 border border-white/10 rounded-2xl p-8 h-full">
               <h2 className="text-2xl md:text-3xl font-bold text-slate-100 mb-4">¿Gestionás múltiples casos?</h2>
               <p className="text-slate-300 mb-6">
-                RFA también brinda servicios de organización y seguimiento documental para empresas, con acceso privado a la
-                información de los casos.
+                RFA también organiza y da seguimiento a múltiples casos desde un entorno privado y trazable.
               </p>
               <Button
                 className="bg-white/10 hover:bg-white/20 text-white font-semibold py-3 px-6 rounded-lg border border-white/20"
@@ -439,16 +321,17 @@ const services = [
         {/* ================= PLANES ================= */}
         <section
           id="planes"
+          aria-labelledby="modalidades"
           className="rfa-home-image-section rfa-home-image-section-08 py-20 px-6 bg-white/5 backdrop-blur-sm"
           style={{ "--rfa-home-image": "url('/images/rfa-home-08.png')" }}
         >
           <div className="max-w-6xl mx-auto">
             <div className="text-center mb-10">
-            <h2 className="text-3xl md:text-4xl font-bold text-emerald-300 mb-6">
-              Modalidades de servicio
+            <h2 id="modalidades" className="text-3xl md:text-4xl font-bold text-emerald-300 mb-6">
+              Cómo podemos ayudarte
             </h2>
             <p className="text-slate-200 mb-8">
-              El análisis inicial es sin costo. Si podemos intervenir, te indicamos qué modalidad se adapta al caso.
+              El análisis inicial es sin costo. Revisamos tu caso y te indicamos qué alternativas están disponibles.
             </p>
             </div>
 
@@ -457,11 +340,35 @@ const services = [
                 {analysisService.priceLabel}
               </p>
               <h3 className="text-2xl font-bold text-white mb-2">{analysisService.name}</h3>
-              <p className="text-slate-200 leading-relaxed">{analysisService.summary}</p>
+              <p className="text-slate-200 leading-relaxed">
+                Contás qué pasó y aportás la documentación disponible. Revisamos el caso y te indicamos si podemos intervenir y qué modalidad corresponde.
+              </p>
             </div>
 
             <div className="grid md:grid-cols-2 gap-6 mb-8">
-              {plans.map((plan) => (
+              {plans.map((plan) => {
+                const publicPlanCopy = {
+                  "professional-folder": {
+                    summary: "Tu caso ordenado y preparado para que puedas continuar el reclamo por tu cuenta.",
+                    features: [
+                      "Cronología clara de los hechos",
+                      "Documentación y evidencia organizadas",
+                      "Antecedentes relevantes del reclamo",
+                      "Carpeta preparada para continuar"
+                    ]
+                  },
+                  "rfa-management": {
+                    summary: "Además de organizar el caso, preparamos las comunicaciones y acompañamos el seguimiento dentro del alcance acordado.",
+                    features: [
+                      "Organización completa del caso",
+                      "Preparación de comunicaciones",
+                      "Seguimiento administrativo acordado",
+                      "Registro de respuestas y avances"
+                    ]
+                  }
+                }[plan.id];
+
+                return (
                 <div
                   key={plan.id}
                   className={`rfa-plan-card border rounded-2xl p-6 ${plan.featured ? "rfa-plan-card-featured" : ""}`}
@@ -472,24 +379,23 @@ const services = [
                   <h3 className="text-xl font-bold text-slate-900 mb-2">{plan.name}</h3>
                   <p className="text-3xl font-extrabold text-slate-950 mb-1">{plan.priceLabel}</p>
                   <p className="text-xs uppercase tracking-wide text-slate-500 mb-4">{plan.currency}</p>
-                  <p className="text-sm text-slate-600 mb-4">{plan.summary}</p>
-                  <ul className="space-y-2 text-sm text-slate-700">
-                    {plan.features.map((item) => (
-                       <li key={item}>• {item.replace("normativa de referencia", "normativa de referencia, cuando corresponda")}</li>
+                  <p className="text-base text-slate-600 leading-relaxed mb-4">{publicPlanCopy.summary}</p>
+                  <ul className="space-y-2 text-base text-slate-700 leading-relaxed">
+                    {publicPlanCopy.features.map((item) => (
+                       <li key={item}>• {item}</li>
                     ))}
                   </ul>
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             <div className="max-w-4xl mx-auto text-center text-slate-300 space-y-3">
               <p>
-                Algunos casos pueden requerir un presupuesto personalizado según el volumen documental, la cantidad de
-                intervinientes, los antecedentes, la reconstrucción necesaria y la carga de trabajo. El precio no depende del monto reclamado.
+                Algunos casos pueden requerir un presupuesto personalizado según su complejidad y carga de trabajo. El precio no depende del monto reclamado.
               </p>
               <p className="font-semibold text-slate-100">
-                Cada reclamo es diferente. Si podemos intervenir, te informamos previamente el alcance, el precio y qué incluye
-                el servicio. No comenzamos ninguna gestión paga sin tu conformidad.
+                Antes de comenzar, te informamos el alcance, el precio y qué incluye el servicio. No iniciamos ningún trabajo pago sin tu conformidad.
               </p>
             </div>
 

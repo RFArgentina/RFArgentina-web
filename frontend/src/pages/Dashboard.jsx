@@ -255,6 +255,17 @@ export default function Dashboard() {
   const isEnterprise = user?.role === "enterprise";
   const isRfaUser = user?.role === "user";
   const showNewClaimSection = isPublicCreateMode || isRfaUser;
+  const normalizedEnterpriseEmail = newEnterpriseEmail.trim().toLowerCase();
+  const existingEnterpriseUser = normalizedEnterpriseEmail
+    ? enterpriseUsers.find((enterpriseUser) => String(enterpriseUser.email || "").trim().toLowerCase() === normalizedEnterpriseEmail)
+    : null;
+
+  useEffect(() => {
+    if (adminCaseSourceFilter !== "empresa") {
+      setGeneratedEnterpriseCredentials(null);
+      setCopiedCredentials(false);
+    }
+  }, [adminCaseSourceFilter]);
 
   useEffect(() => {
     if (user?.email) setEmailContacto((current) => current || user.email);
@@ -681,16 +692,31 @@ export default function Dashboard() {
     return "Sin documentación";
   };
 
+  const adminSummaryCases = useMemo(() => {
+    if (!isAdmin) return [];
+    return cases.filter((caseItem) => {
+      const isEnterpriseCase = Boolean(caseItem.enterprise_user_id);
+      const matchesSource =
+        adminCaseSourceFilter === "todos" ||
+        (adminCaseSourceFilter === "empresa" && isEnterpriseCase) ||
+        (adminCaseSourceFilter === "rfa" && !isEnterpriseCase);
+      const matchesListContext =
+        (adminListFilter !== "attention" || isAdminAttentionCase(caseItem)) &&
+        (adminListFilter !== "closed" || isAdminClosedCase(caseItem));
+      return matchesSource && matchesListContext;
+    });
+  }, [cases, isAdmin, adminCaseSourceFilter, adminListFilter]);
+
   const adminSummary = useMemo(() => {
     if (!isAdmin) return [];
     return [
-      { label: "Activos", value: cases.filter((caseItem) => !isAdminClosedCase(caseItem)).length, tone: "blue", filter: "active" },
-      { label: "Requieren atención", value: cases.filter(isAdminAttentionCase).length, tone: "amber", filter: "attention" },
-      { label: "Documentación pendiente", value: cases.filter(isAdminDocumentationPendingCase).length, tone: "gold", filter: "documentation" },
-      { label: "Cerrados", value: cases.filter(isAdminClosedCase).length, tone: "slate", filter: "closed" },
-      { label: "Nuevos", value: cases.filter(isNewAdminCase).length, tone: "blue", filter: "new", source: "rfa" }
+      { label: "Activos", value: adminSummaryCases.filter((caseItem) => !isAdminClosedCase(caseItem)).length, tone: "blue", filter: "active" },
+      { label: "Requieren atención", value: adminSummaryCases.filter(isAdminAttentionCase).length, tone: "amber", filter: "attention" },
+      { label: "Documentación pendiente", value: adminSummaryCases.filter(isAdminDocumentationPendingCase).length, tone: "gold", filter: "documentation" },
+      { label: "Cerrados", value: adminSummaryCases.filter(isAdminClosedCase).length, tone: "slate", filter: "closed" },
+      { label: "Nuevos", value: adminSummaryCases.filter(isNewAdminCase).length, tone: "blue", filter: "new", source: "rfa" }
     ];
-  }, [cases, isAdmin]);
+  }, [adminSummaryCases, isAdmin]);
 
   function normalizeCompare(value) {
     return String(value || "")
@@ -726,6 +752,24 @@ export default function Dashboard() {
     if (v === "alta") return "Alta";
     if (v === "critica" || v === "critico" || v.includes("critic")) return "Crítica";
     return String(value || "");
+  }
+
+  function getEnterprisePrioritySelectValue(value) {
+    const normalized = normalizeCompare(value);
+    if (!normalized || normalized === "pendiente" || normalized === "sin asignar") return "Pendiente";
+    return toEnterprisePriority(value);
+  }
+
+  function getEnterprisePriorityDisplay(value) {
+    const normalized = normalizeCompare(value);
+    if (!normalized || normalized === "pendiente" || normalized === "sin asignar") return "Sin asignar";
+    return toEnterprisePriority(value);
+  }
+
+  function getEnterpriseRiskDisplay(value) {
+    const normalized = normalizeCompare(value);
+    if (!normalized || normalized === "pendiente" || normalized === "sin evaluar") return "Sin evaluar";
+    return String(value);
   }
 
 
@@ -1322,6 +1366,10 @@ export default function Dashboard() {
     event.preventDefault();
     if (!newEnterpriseEmail.trim()) {
       setError("Debes ingresar un email para el usuario empresa.");
+      return;
+    }
+    if (existingEnterpriseUser) {
+      setError("Ese correo ya tiene un acceso de empresa. No se creó otro usuario.");
       return;
     }
     setCreatingEnterpriseUser(true);
@@ -2725,6 +2773,62 @@ export default function Dashboard() {
               </div>
             )}
 
+            {!loading && isAdmin && adminCaseSourceFilter === "empresa" && (
+              <div className="bg-white/10 border border-white/10 rounded-2xl p-5 space-y-4">
+                <h2 className="text-xl font-semibold">Generar usuario empresa</h2>
+                <form onSubmit={handleCreateEnterpriseUser} className="grid md:grid-cols-[1fr_1fr_auto] gap-3">
+                  <input
+                    type="email"
+                    value={newEnterpriseEmail}
+                    onChange={(e) => setNewEnterpriseEmail(e.target.value)}
+                    placeholder="empresa@dominio.com"
+                    aria-label="Email del usuario empresa"
+                    className="rounded-lg bg-white/10 border border-white/10 px-4 py-2 text-white placeholder:text-slate-400"
+                    required
+                  />
+                  <input
+                    type="password"
+                    value={newEnterprisePassword}
+                    onChange={(e) => setNewEnterprisePassword(e.target.value)}
+                    placeholder="Contraseña (opcional)"
+                    aria-label="Contraseña opcional del usuario empresa"
+                    className="rounded-lg bg-white/10 border border-white/10 px-4 py-2 text-white placeholder:text-slate-400"
+                  />
+                  <Button
+                    type="submit"
+                    className="bg-emerald-500 hover:bg-emerald-600 text-white"
+                    disabled={creatingEnterpriseUser || Boolean(existingEnterpriseUser)}
+                  >
+                    {creatingEnterpriseUser ? "Generando..." : "Generar usuario empresa"}
+                  </Button>
+                </form>
+                {existingEnterpriseUser ? (
+                  <p className="text-sm text-amber-200" role="status">
+                    Ya existe un acceso de empresa para {existingEnterpriseUser.email}. No se generará un duplicado.
+                  </p>
+                ) : (
+                  <p className="text-xs text-slate-400">
+                    Si no cargas contraseña, el sistema genera una segura automáticamente.
+                  </p>
+                )}
+                {generatedEnterpriseCredentials && (
+                  <div className="bg-white/5 border border-white/10 rounded-xl p-4 text-sm text-slate-200">
+                    <p><span className="text-slate-400">Email:</span> {generatedEnterpriseCredentials.email}</p>
+                    <p><span className="text-slate-400">Contraseña:</span> {generatedEnterpriseCredentials.password}</p>
+                    <div className="mt-3">
+                      <Button
+                        type="button"
+                        className="bg-white/10 hover:bg-white/20 text-white"
+                        onClick={handleCopyEnterpriseCredentials}
+                      >
+                        {copiedCredentials ? "Copiado" : "Copiar credenciales"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {!isPublicCreateMode && error && (
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-400/30 bg-rose-500/10 px-4 py-3" role="alert">
                 <p className="text-sm text-rose-200">{error}</p>
@@ -2879,7 +2983,7 @@ export default function Dashboard() {
                         onChange={(e) => setEnterpriseRetentionChoice(e.target.value)}
                       >
                         {enterpriseRetentionOptions.map((option) => (
-                          <option key={option.value} value={option.value}>{option.label}</option>
+                          <option key={option.value} value={option.value} className="bg-slate-900 text-slate-100">{option.label}</option>
                         ))}
                       </select>
                     </div>
@@ -2916,9 +3020,9 @@ export default function Dashboard() {
                       value={enterpriseFilterStatus}
                       onChange={(e) => setEnterpriseFilterStatus(e.target.value)}
                     >
-                      <option value="">Todos los estados</option>
+                      <option value="" className="bg-slate-900 text-slate-100">Todos los estados</option>
                       {enterpriseStatusOptions.map((status) => (
-                        <option key={status} value={status}>{status}</option>
+                        <option key={status} value={status} className="bg-slate-900 text-slate-100">{status}</option>
                       ))}
                     </select>
                     <select
@@ -2926,9 +3030,9 @@ export default function Dashboard() {
                       value={enterpriseFilterPriority}
                       onChange={(e) => setEnterpriseFilterPriority(e.target.value)}
                     >
-                      <option value="">Todas las prioridades</option>
+                      <option value="" className="bg-slate-900 text-slate-100">Todas las prioridades</option>
                       {priorityOptions.map((priority) => (
-                        <option key={priority} value={priority}>{priority}</option>
+                        <option key={priority} value={priority} className="bg-slate-900 text-slate-100">{priority === "Pendiente" ? "Sin asignar" : priority}</option>
                       ))}
                     </select>
                     <div className="text-xs text-slate-300 flex items-center">
@@ -2970,6 +3074,10 @@ export default function Dashboard() {
                     </thead>
                     <tbody>
                       {enterpriseVisibleCases.map((c) => {
+                        const enterprisePriorityValue = getEnterprisePrioritySelectValue(
+                          enterprisePriorityDrafts[c.id] ?? c.prioridad
+                        );
+                        const enterpriseRiskValue = getEnterpriseRiskDisplay(c.riesgo);
                         const openedDays = Math.max(
                           0,
                           Math.floor((Date.now() - new Date(c.created_at).getTime()) / (1000 * 60 * 60 * 24))
@@ -2995,7 +3103,7 @@ export default function Dashboard() {
                                   onChange={(e) => setEnterpriseStatusDrafts((prev) => ({ ...prev, [c.id]: e.target.value }))}
                                 >
                                   {enterpriseStatusOptions.map((status) => (
-                                    <option key={status} value={status}>{status}</option>
+                                    <option key={status} value={status} className="bg-slate-900 text-slate-100">{status}</option>
                                   ))}
                                 </select>
                               </div>
@@ -3003,24 +3111,24 @@ export default function Dashboard() {
                             <td className="px-4 py-3">
                               <div
                                 className={`rounded-lg border ${getPriorityBoxClass(
-                                  toEnterprisePriority(enterprisePriorityDrafts[c.id] ?? c.prioridad ?? "Pendiente"),
+                                  enterprisePriorityValue,
                                   toEnterpriseStatus(enterpriseStatusDrafts[c.id] ?? c.estado ?? "Pendiente")
                                 )}`}
                               >
                                 <select
                                   className="w-full rounded-lg bg-transparent px-3 py-2 text-xs font-bold text-slate-100 border-0 focus:outline-none"
-                                  value={toEnterprisePriority(enterprisePriorityDrafts[c.id] ?? c.prioridad ?? "Pendiente")}
+                                  value={enterprisePriorityValue}
                                   onChange={(e) => setEnterprisePriorityDrafts((prev) => ({ ...prev, [c.id]: e.target.value }))}
                                 >
                                   {priorityOptions.map((priority) => (
-                                    <option key={priority} value={priority}>{priority}</option>
+                                    <option key={priority} value={priority} className="bg-slate-900 text-slate-100">{priority === "Pendiente" ? "Sin asignar" : priority}</option>
                                   ))}
                                 </select>
                               </div>
                             </td>
                             <td className="px-4 py-3">
                               <span className={`inline-flex mt-2 px-2 py-0.5 rounded-full text-xs ${getRiskBadge(c.riesgo || "Pendiente")}`}>
-                                {c.riesgo || "Pendiente"}
+                                {enterpriseRiskValue}
                               </span>
                             </td>
                             <td className="px-4 py-3">
@@ -3058,9 +3166,10 @@ export default function Dashboard() {
                             </td>
                           </tr>
                           {expandedEnterpriseCaseDetailId === c.id && (
-                            <tr className="border-b border-white/10 bg-white/5">
-                              <td colSpan={12} className="px-4 py-4">
-                                <div className="grid md:grid-cols-2 gap-4 text-sm text-slate-300">
+                            <tr className="border-b border-sky-300/20 border-t-2 border-t-sky-300/20 bg-slate-950/35">
+                              <td colSpan={12} className="px-4 py-3">
+                                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 md:p-5">
+                                <div className="grid md:grid-cols-2 gap-x-6 gap-y-3 text-sm text-slate-300">
                                   <div><span className="text-slate-400">Codigo:</span> {c.case_code || "-"}</div>
                                   <div><span className="text-slate-400">Caso ID:</span> {c.id}</div>
                                   <div><span className="text-slate-400">Cliente:</span> {c.nombre_completo || "-"}</div>
@@ -3070,8 +3179,8 @@ export default function Dashboard() {
                                   <div><span className="text-slate-400">Canal origen:</span> {c.canal_origen || "-"}</div>
                                   <div><span className="text-slate-400">Fecha del caso:</span> {c.fecha_caso || "-"}</div>
                                   <div><span className="text-slate-400">Estado:</span> {c.estado || "Pendiente"}</div>
-                                  <div><span className="text-slate-400">Prioridad:</span> {c.prioridad || "Pendiente"}</div>
-                                  <div><span className="text-slate-400">Riesgo:</span> {c.riesgo || "Pendiente"}</div>
+                                  <div><span className="text-slate-400">Prioridad:</span> {getEnterprisePriorityDisplay(c.prioridad)}</div>
+                                  <div><span className="text-slate-400">Riesgo:</span> {getEnterpriseRiskDisplay(c.riesgo)}</div>
                                   <div><span className="text-slate-400">Documentación:</span> {c.documentacion_estado || "En revisión"}</div>
                                   <div><span className="text-slate-400">Monto:</span> {c.monto_valor ? `${c.monto_valor} ${c.monto_moneda || ""}` : "-"}</div>
                                   <div><span className="text-slate-400">Escala:</span> {c.monto_escala || "-"}</div>
@@ -3110,6 +3219,7 @@ export default function Dashboard() {
                                       ))}
                                     </div>
                                   </div>
+                                </div>
                                 </div>
                               </td>
                             </tr>
@@ -3205,54 +3315,6 @@ export default function Dashboard() {
                   </div>
                 </div>
               </>
-            )}
-
-            {!loading && isAdmin && adminCaseSourceFilter === "empresa" && (
-              <div className="bg-white/10 border border-white/10 rounded-2xl p-5 space-y-4">
-                <h2 className="text-xl font-semibold">Generar usuario empresa</h2>
-                <form onSubmit={handleCreateEnterpriseUser} className="grid md:grid-cols-[1fr_1fr_auto] gap-3">
-                  <input
-                    type="email"
-                    value={newEnterpriseEmail}
-                    onChange={(e) => setNewEnterpriseEmail(e.target.value)}
-                    placeholder="empresa@dominio.com"
-                    className="rounded-lg bg-white/10 border border-white/10 px-4 py-2 text-white placeholder:text-slate-400"
-                    required
-                  />
-                  <input
-                    type="text"
-                    value={newEnterprisePassword}
-                    onChange={(e) => setNewEnterprisePassword(e.target.value)}
-                    placeholder="Contraseña (opcional)"
-                    className="rounded-lg bg-white/10 border border-white/10 px-4 py-2 text-white placeholder:text-slate-400"
-                  />
-                  <Button
-                    type="submit"
-                    className="bg-emerald-500 hover:bg-emerald-600 text-white"
-                    disabled={creatingEnterpriseUser}
-                  >
-                    {creatingEnterpriseUser ? "Generando..." : "Generar usuario empresa"}
-                  </Button>
-                </form>
-                <p className="text-xs text-slate-400">
-                  Si no cargas contraseña, el sistema genera una segura automáticamente.
-                </p>
-                {generatedEnterpriseCredentials && (
-                  <div className="bg-white/5 border border-white/10 rounded-xl p-4 text-sm text-slate-200">
-                    <p><span className="text-slate-400">Email:</span> {generatedEnterpriseCredentials.email}</p>
-                    <p><span className="text-slate-400">Contraseña:</span> {generatedEnterpriseCredentials.password}</p>
-                    <div className="mt-3">
-                      <Button
-                        type="button"
-                        className="bg-white/10 hover:bg-white/20 text-white"
-                        onClick={handleCopyEnterpriseCredentials}
-                      >
-                        {copiedCredentials ? "Copiado" : "Copiar credenciales"}
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
             )}
 
             {!loading && isAdmin && (
